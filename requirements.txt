@@ -1,0 +1,3 @@
+# Minimal deps for now (tkinter standard)
+# pandas>=2.0  # Uncomment for advanced data
+
