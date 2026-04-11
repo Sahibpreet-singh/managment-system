@@ -1,6 +1,23 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
-from data import *
+import database as db
+
+# ── Load data from SQLite at startup ──────────────────────────────────────────
+def _reload_all():
+    global INSTALLMENT_CASES, CREDIT_CASES, OVERVIEW
+    INSTALLMENT_CASES = db.get_all_installment_cases()
+    CREDIT_CASES      = db.get_all_credit_cases()
+    OVERVIEW          = db.get_overview()
+
+INSTALLMENT_CASES = []
+CREDIT_CASES      = []
+OVERVIEW          = {}
+_reload_all()
+
+# Legacy compat helpers (DUE views now come from DB directly)
+DUE_PAYMENTS        = []   # populated dynamically
+DUE_PAYMENTS_REPORT = []   # populated dynamically
+VILLAGE_SETUP       = []   # populated dynamically
 
 # ── Palette ───────────────────────────────────────────────────────────────────
 BG          = "#f9fafb"
@@ -239,7 +256,7 @@ def new_case_form(parent, on_save_callback=None):
              bg=BG_CARD).grid(row=7, column=0, sticky="w", pady=3, padx=4)
     village_var = tk.StringVar()
     entries['village'] = village_var
-    village_vals = sorted({r.get('village', '') for r in INSTALLMENT_CASES if r.get('village')})
+    village_vals = db.get_villages()
     village_cb = ttk.Combobox(cg, textvariable=village_var, values=village_vals,
                                style="Dark.TCombobox", font=(FONT_UI, 10), width=20)
     village_cb.grid(row=7, column=1, columnspan=3, sticky="ew",
@@ -460,7 +477,6 @@ def new_case_form(parent, on_save_callback=None):
             return
 
         record = {
-            'id':           str(next_id),
             'file_no':      file_no,
             'date':         get('date'),
             'customer':     get('account'),
@@ -469,8 +485,9 @@ def new_case_form(parent, on_save_callback=None):
             'finance_amt':  get('amount_financed'),
             'balance':      get('final_amount'),
             'relation':     get('relation'),
-            'address':      (get('address1') + " " + get('address2')).strip(),
-            'remarks':      get('remarks_cust'),
+            'address1':     get('address1'),
+            'address2':     get('address2'),
+            'remarks_cust': get('remarks_cust'),
             'item':         get('item'),
             'brand':        get('brand'),
             'model':        get('model'),
@@ -478,8 +495,9 @@ def new_case_form(parent, on_save_callback=None):
             'invoice_no':   get('invoice_no'),
             'amount':       get('amount'),
             'advance':      get('advance'),
-            'no_inst':      get('no_instalments'),
-            'inst_amt':     get('instalment_amt'),
+            'amount_financed': get('amount_financed'),
+            'no_instalments': get('no_instalments'),
+            'instalment_amt': get('instalment_amt'),
             'final_amount': get('final_amount'),
             'g1_name':      get('g1_name'),
             'g1_relation':  get('g1_relation'),
@@ -495,7 +513,9 @@ def new_case_form(parent, on_save_callback=None):
             'g2_remarks':   get('g2_remarks'),
         }
 
-        INSTALLMENT_CASES.append(record)
+        new_case_id = db.save_installment_case(record)
+        record['id'] = new_case_id
+        _reload_all()
         if on_save_callback:
             on_save_callback(record)
 
@@ -524,6 +544,249 @@ def new_case_form(parent, on_save_callback=None):
 
     win.bind("<F10>",    save_and_exit)
     win.bind("<Escape>", lambda e: win.destroy())
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# CASE DETAIL WINDOW (shared by Installment & Credit)
+# ═════════════════════════════════════════════════════════════════════════════
+def open_installment_case_detail(data, refresh_callback=None):
+    """Opens a styled, editable detail window for an existing case."""
+    root = tk.Toplevel()
+    root.title("Case Details — Sandhu Enterprises")
+    root.state("zoomed")
+    root.configure(bg=BG)
+    apply_dark_titlebar(root)
+
+    # ── Top bar ───────────────────────────────────────────────────────────
+    topbar = tk.Frame(root, bg=BG_PANEL)
+    topbar.pack(fill=tk.X)
+    tk.Frame(topbar, bg=ACCENT, width=4).pack(side=tk.LEFT, fill=tk.Y)
+    tb_inner = tk.Frame(topbar, bg=BG_PANEL, padx=18, pady=12)
+    tb_inner.pack(side=tk.LEFT)
+    tk.Label(tb_inner, text="CASE DETAILS",
+             font=(FONT_UI, 15, "bold"), fg=TEXT, bg=BG_PANEL).pack(anchor="w")
+    tk.Label(tb_inner, text=f"File No: {data.get('file_no', '')}  ·  {data.get('customer', '')}",
+             font=(FONT_UI, 9), fg=TEXT_DIM, bg=BG_PANEL).pack(anchor="w")
+
+    badge_f = tk.Frame(topbar, bg=BG_PANEL, padx=20)
+    badge_f.pack(side=tk.RIGHT)
+    tk.Label(badge_f, text="CASE ID", font=(FONT_UI, 8),
+             fg=TEXT_DIM, bg=BG_PANEL).pack()
+    tk.Label(badge_f, text=str(data.get('id', '')),
+             font=(FONT_MONO, 22, "bold"), fg=ACCENT, bg=BG_PANEL).pack()
+
+    tk.Frame(root, bg=BORDER, height=1).pack(fill=tk.X)
+    make_shortcut_bar(root, [
+        ("ESC", "CANCEL",      ACCENT_RED),
+        ("F10", "SAVE & EXIT", ACCENT2),
+    ])
+    tk.Frame(root, bg=BORDER, height=1).pack(fill=tk.X)
+
+    # ── Scrollable canvas ─────────────────────────────────────────────────
+    canvas = tk.Canvas(root, bg=BG, highlightthickness=0)
+    canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+    body = tk.Frame(canvas, bg=BG, padx=20, pady=16)
+    body_id = canvas.create_window((0, 0), window=body, anchor="nw")
+    body.bind("<Configure>",
+              lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+    canvas.bind("<Configure>",
+                lambda e: canvas.itemconfig(body_id, width=e.width))
+    canvas.bind_all("<MouseWheel>",
+                    lambda e: canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+
+    entries = {}
+
+    def make_card(parent, col, padx=(0, 8)):
+        card = tk.Frame(parent, bg=BG_CARD,
+                        highlightbackground=BORDER, highlightthickness=1,
+                        padx=14, pady=10)
+        card.grid(row=0, column=col, sticky="nsew", padx=padx)
+        return card
+
+    def add_row(grid, label, key, row, value="", span=3):
+        tk.Label(grid, text=label, font=(FONT_UI, 9), fg=TEXT_DIM,
+                 bg=BG_CARD, width=12, anchor="w").grid(
+                 row=row, column=0, sticky="w", pady=4, padx=4)
+        e = make_entry(grid, width=28)
+        e.insert(0, value)
+        e.grid(row=row, column=1, columnspan=span, sticky="ew",
+               ipady=6, pady=4, padx=(0, 4))
+        entries[key] = e
+
+    # ── TOP ROW ───────────────────────────────────────────────────────────
+    top_row = tk.Frame(body, bg=BG)
+    top_row.pack(fill=tk.X, pady=(0, 8))
+    top_row.grid_columnconfigure(0, weight=2)
+    top_row.grid_columnconfigure(1, weight=3)
+
+    # Customer card
+    cust_card = make_card(top_row, 0)
+    section_header(cust_card, "CUSTOMER DETAILS", ACCENT)
+    cg = tk.Frame(cust_card, bg=BG_CARD)
+    cg.pack(fill=tk.X)
+    cg.grid_columnconfigure(1, weight=1)
+
+    cust_fields = [
+        ("FILE NO",     "file_no",   data.get("file_no", "")),
+        ("DATE",        "date",      data.get("date", "")),
+        ("ACCOUNT",     "customer",  data.get("customer", "")),
+        ("W/O D/O S/O", "relation",  data.get("relation", "")),
+        ("ADDRESS",     "address",   data.get("address", "")),
+        ("MOBILE NO",   "mobile_no", data.get("mobile_no", "")),
+        ("REMARKS",     "remarks",   data.get("remarks", "")),
+    ]
+    for i, (lbl, key, val) in enumerate(cust_fields):
+        add_row(cg, lbl, key, i, val)
+
+    # Village combobox
+    tk.Label(cg, text="VILLAGE", font=(FONT_UI, 9), fg=TEXT_DIM,
+             bg=BG_CARD).grid(row=len(cust_fields), column=0, sticky="w", pady=3, padx=4)
+    village_var = tk.StringVar(value=data.get("village", ""))
+    entries['village'] = village_var
+    village_vals = db.get_villages()
+    ttk.Combobox(cg, textvariable=village_var, values=village_vals,
+                 style="Dark.TCombobox", font=(FONT_UI, 10), width=20
+                 ).grid(row=len(cust_fields), column=1, sticky="ew", ipady=4, pady=3, padx=(0, 4))
+
+    # Item card
+    item_card = make_card(top_row, 1, padx=0)
+    section_header(item_card, "ITEM PARTICULARS", ACCENT_PUR)
+    ig = tk.Frame(item_card, bg=BG_CARD)
+    ig.pack(fill=tk.X)
+    ig.grid_columnconfigure(1, weight=1)
+
+    item_fields = [
+        ("ITEM",            "item",       data.get("item", "")),
+        ("BRAND",           "brand",      data.get("brand", "")),
+        ("MODEL",           "model",      data.get("model", "")),
+        ("SRNO",            "srno",       data.get("srno", "")),
+        ("INVOICE NO",      "invoice_no", data.get("invoice_no", "")),
+        ("AMOUNT",          "amount",     data.get("amount", "")),
+        ("ADVANCE",         "advance",    data.get("advance", "")),
+        ("AMOUNT FINANCED", "amount_financed", data.get("amount_financed", "")),
+        ("NO. OF INST",     "no_inst",    data.get("no_instalments", "")),
+        ("INST AMOUNT",     "inst_amt",   data.get("instalment_amt", "")),
+        ("BALANCE",     "balance",    data.get("balance", "")),
+    ]
+    for i, (lbl, key, val) in enumerate(item_fields):
+        add_row(ig, lbl, key, i, val)
+
+    # ── GUARANTORS ROW ────────────────────────────────────────────────────
+    guar_row = tk.Frame(body, bg=BG)
+    guar_row.pack(fill=tk.X, pady=(8, 0))
+    guar_row.grid_columnconfigure(0, weight=1)
+    guar_row.grid_columnconfigure(1, weight=1)
+
+    def build_guar(parent_frame, prefix, title, color, col, data):
+        card = tk.Frame(parent_frame, bg=BG_CARD,
+                        highlightbackground=BORDER, highlightthickness=1,
+                        padx=14, pady=10)
+        card.grid(row=0, column=col, sticky="nsew",
+                  padx=(0, 8) if col == 0 else 0)
+        section_header(card, title, color)
+        gg = tk.Frame(card, bg=BG_CARD)
+        gg.pack(fill=tk.X)
+        gg.grid_columnconfigure(1, weight=1)
+        fields = [
+            ("NAME",        f"{prefix}_name",     data.get(f"{prefix}_name", "")),
+            ("W/O D/O S/O", f"{prefix}_relation", data.get(f"{prefix}_relation", "")),
+            ("ADDRESS",     f"{prefix}_address",  data.get(f"{prefix}_address", "")),
+            ("VILLAGE",     f"{prefix}_village",  data.get(f"{prefix}_village", "")),
+            ("MOBILE NO",   f"{prefix}_mobile",   data.get(f"{prefix}_mobile", "")),
+            ("REMARKS",     f"{prefix}_remarks",  data.get(f"{prefix}_remarks", "")),
+        ]
+        for i, (lbl, key, val) in enumerate(fields):
+            add_row(gg, lbl, key, i, val)
+
+    build_guar(guar_row, "g1", "FIRST GUARANTOR PARTICULARS",  ACCENT,     0, data)
+    build_guar(guar_row, "g2", "SECOND GUARANTOR PARTICULARS", ACCENT_PUR, 1, data)
+
+    # ── Action bar ────────────────────────────────────────────────────────
+    tk.Frame(root, bg=BORDER, height=1).pack(fill=tk.X, side=tk.BOTTOM)
+    action_bar = tk.Frame(root, bg=BG_PANEL, pady=12, padx=24)
+    action_bar.pack(fill=tk.X, side=tk.BOTTOM)
+
+    def get(key):
+        v = entries.get(key)
+        if v is None: return ""
+        if isinstance(v, tk.StringVar): return v.get()
+        if isinstance(v, tk.Entry):     return v.get()
+        return ""
+
+    def save_changes(e=None):
+        data["file_no"]    = get("file_no")
+        data["date"]       = get("date")
+        data["customer"]   = get("customer")
+        data["relation"]   = get("relation")
+        data["address"]    = get("address")
+        data["village"]    = get("village")
+        data["mobile_no"]  = get("mobile_no")
+        data["remarks"]    = get("remarks")
+        data["item"]       = get("item")
+        data["brand"]      = get("brand")
+        data["model"]      = get("model")
+        data["srno"]       = get("srno")
+        data["invoice_no"] = get("invoice_no")
+        data["amount"]     = get("amount")
+        data["advance"]    = get("advance")
+    def save_changes(e=None):
+        data["file_no"]        = get("file_no")
+        data["date"]           = get("date")
+        data["customer"]       = get("customer")
+        data["relation"]       = get("relation")
+        data["address1"]       = get("address")
+        data["village"]        = get("village")
+        data["mobile_no"]      = get("mobile_no")
+        data["remarks_cust"]   = get("remarks")
+        data["item"]           = get("item")
+        data["brand"]          = get("brand")
+        data["model"]          = get("model")
+        data["srno"]           = get("srno")
+        data["invoice_no"]     = get("invoice_no")
+        data["amount"]         = get("amount")
+        data["advance"]        = get("advance")
+        data["amount_financed"] = get("amount_financed")
+        data["no_instalments"] = get("no_inst")
+        data["instalment_amt"] = get("inst_amt")
+        data["balance"]        = get("balance")
+        data["g1_name"]        = get("g1_name")
+        data["g1_relation"]    = get("g1_relation")
+        data["g1_address"]     = get("g1_address")
+        data["g1_village"]     = get("g1_village")
+        data["g1_mobile"]      = get("g1_mobile")
+        data["g1_remarks"]     = get("g1_remarks")
+        data["g2_name"]        = get("g2_name")
+        data["g2_relation"]    = get("g2_relation")
+        data["g2_address"]     = get("g2_address")
+        data["g2_village"]     = get("g2_village")
+        data["g2_mobile"]      = get("g2_mobile")
+        data["g2_remarks"]     = get("g2_remarks")
+
+        db.save_installment_case(data)
+        _reload_all()
+        messagebox.showinfo("Saved ✓", "Changes saved successfully!", parent=root)
+        if refresh_callback:
+            refresh_callback()
+        root.destroy()
+
+    tk.Button(action_bar, text="✕  CANCEL  ESC",
+              command=root.destroy,
+              font=(FONT_UI, 11, "bold"), fg=ACCENT_RED, bg=BG_CARD,
+              activeforeground=ACCENT_RED, activebackground=BG_PANEL,
+              relief="flat", bd=0, cursor="hand2", padx=20, pady=10,
+              highlightthickness=1, highlightbackground=ACCENT_RED
+              ).pack(side=tk.LEFT, padx=(0, 16))
+
+    tk.Button(action_bar, text="💾  SAVE & EXIT  F10",
+              command=save_changes,
+              font=(FONT_UI, 11, "bold"), fg=BG, bg=ACCENT2,
+              activeforeground=BG, activebackground="#2ebd68",
+              relief="flat", bd=0, cursor="hand2", padx=24, pady=10,
+              ).pack(side=tk.LEFT)
+
+    root.bind("<F10>",    save_changes)
+    root.bind("<Escape>", lambda e: root.destroy())
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -675,157 +938,15 @@ def installment_window(parent):
         new_case_form(win, on_save_callback=lambda _: win.after(100, refresh))
 
     def open_detail(e=None):
-        
-        root = tk.Tk()
-        root.title("New Case Details")
-        root.geometry("1200x650")
-        root.configure(bg="#f4f6f8")
-
-        # ---------- MAIN CONTAINERS ----------
-        left_frame = tk.Frame(root, bg="white", bd=2, relief="groove")
-        left_frame.place(x=10, y=10, width=380, height=600)
-
-        right_frame = tk.Frame(root, bg="white", bd=2, relief="groove")
-        right_frame.place(x=400, y=10, width=780, height=600)
-
-        # ---------- LEFT SIDE (CUSTOMER) ----------
-        tk.Label(left_frame, text="NEW CASE DETAILS", font=("Arial", 12, "bold"), bg="white").pack(pady=5)
-
-        def add_field(parent, label):
-            frame = tk.Frame(parent, bg="white")
-            frame.pack(fill="x", padx=10, pady=3)
-            tk.Label(frame, text=label, width=12, anchor="w", bg="white").pack(side="left")
-            entry = tk.Entry(frame)
-            entry.pack(side="left", fill="x", expand=True)
-            return entry
-
-        file_no = add_field(left_frame, "FILE NO")
-        date = add_field(left_frame, "DATE")
-        account = add_field(left_frame, "ACCOUNT")
-        father = add_field(left_frame, "W/O D/O S/O")
-        address = add_field(left_frame, "ADDRESS")
-        village = add_field(left_frame, "VILLAGE")
-        mobile = add_field(left_frame, "MOBILE")
-        remarks = add_field(left_frame, "REMARKS")
-
-        # ---------- GUARANTOR ----------
-        tk.Label(left_frame, text="FIRST GUARANTOR PARTICULARS",
-                font=("Arial", 10, "bold"), bg="white").pack(pady=10)
-
-        g_name = add_field(left_frame, "NAME")
-        g_father = add_field(left_frame, "W/O D/O S/O")
-        g_address = add_field(left_frame, "ADDRESS")
-        g_village = add_field(left_frame, "VILLAGE")
-        g_mobile = add_field(left_frame, "MOBILE")
-        g_remarks = add_field(left_frame, "REMARKS")
-
-        # ---------- RIGHT SIDE (ITEM DETAILS) ----------
-        tk.Label(right_frame, text="ITEM PARTICULARS",
-                font=("Arial", 12, "bold"), bg="white").pack(pady=5)
-
-        top_frame = tk.Frame(right_frame, bg="white")
-        top_frame.pack(fill="x", padx=10)
-
-        def add_small(parent, label):
-            frame = tk.Frame(parent, bg="white")
-            frame.pack(side="left", padx=10)
-            tk.Label(frame, text=label, bg="white").pack()
-            e = tk.Entry(frame, width=12)
-            e.pack()
-            return e
-
-        item_entry = add_small(top_frame, "ITEM")
-        amount     = add_small(top_frame, "AMOUNT")
-        receipt_t  = add_small(top_frame, "TOTAL RECEIPT")
-        balance    = add_small(top_frame, "BALANCE")
-
-        # NEXT DUE DATE
-        due_frame = tk.Frame(right_frame, bg="white")
-        due_frame.pack(pady=10)
-
-        tk.Label(due_frame, text="NEXT DUE DATE", bg="white").pack(side="left")
-        due_entry = tk.Entry(due_frame)
-        due_entry.pack(side="left", padx=10)
-
-        # ---------- TABLE ----------
-        tbl_cols = ("item", "date", "sale_amt", "receipt")
-        sale_tree = ttk.Treeview(right_frame, columns=tbl_cols, show="headings", height=10)
-
-        sale_tree.heading("item",     text="ITEM")
-        sale_tree.heading("date",     text="DATE")
-        sale_tree.heading("sale_amt", text="SALE AMT")
-        sale_tree.heading("receipt",  text="RECEIPT")
-
-        for c in tbl_cols:
-            sale_tree.column(c, anchor="center", width=160)
-
-        sale_tree.pack(fill="both", expand=True, padx=10, pady=5)
-
-        # SAMPLE ROW
-        sale_tree.insert("", "end", values=("", "30/07/2024", "15200", "200"))
-
-        # --- Inline editing for the sale table ---
-        _sale_edit = [None]
-
-        def on_sale_dbl(event):
-            row = sale_tree.identify_row(event.y)
-            col = sale_tree.identify_column(event.x)
-            if not row:
-                return
-            if _sale_edit[0]:
-                _sale_edit[0].destroy()
-                _sale_edit[0] = None
-            bbox = sale_tree.bbox(row, col)
-            if not bbox:
-                return
-            bx, by, bw, bh = bbox
-            ci = int(col.replace("#", "")) - 1
-            cur = sale_tree.item(row, "values")[ci]
-            ent = tk.Entry(sale_tree, font=("Segoe UI", 10),
-                           relief="flat", highlightthickness=1,
-                           highlightcolor="#60a5fa", highlightbackground="#60a5fa")
-            ent.place(x=bx, y=by, width=bw, height=bh)
-            ent.insert(0, cur)
-            ent.select_range(0, tk.END)
-            ent.focus_set()
-            _sale_edit[0] = ent
-
-            def commit(e=None):
-                vals = list(sale_tree.item(row, "values"))
-                vals[ci] = ent.get()
-                sale_tree.item(row, values=vals)
-                ent.destroy()
-                _sale_edit[0] = None
-
-            ent.bind("<Return>",   commit)
-            ent.bind("<Tab>",      commit)
-            ent.bind("<Escape>",   lambda e: (ent.destroy(), _sale_edit.__setitem__(0, None)))
-            ent.bind("<FocusOut>", commit)
-
-        sale_tree.bind("<Double-1>", on_sale_dbl)
-
-        def add_sale_row():
-            sale_tree.insert("", "end", values=("", "", "", ""))
-
-        tk.Button(right_frame, text="＋  Add Row", font=("Segoe UI", 9),
-                  fg="white", bg="#60a5fa", relief="flat", bd=0,
-                  padx=10, pady=4, cursor="hand2",
-                  command=add_sale_row).pack(anchor="w", padx=10, pady=(0, 6))
-
-        # ---------- BUTTONS ----------
-        btn_frame = tk.Frame(root, bg="#f4f6f8")
-        btn_frame.place(x=10, y=620)
-
-        tk.Button(btn_frame, text="CANCEL Esc", width=15, bg="#ddd",
-                  command=root.destroy).pack(side="left", padx=10)
-        tk.Button(btn_frame, text="SAVE & EXIT F10", width=20,
-                  bg="#4CAF50", fg="white",
-                  command=lambda: messagebox.showinfo(
-                      "Saved", "Case details saved.", parent=root)
-                  ).pack(side="left")
-        root.bind("<Escape>", lambda e: root.destroy())
-        root.bind("<F10>",    lambda e: messagebox.showinfo(
-            "Saved", "Case details saved.", parent=root))
+        sel = tree.selection()
+        if not sel:
+            messagebox.showinfo("Select", "Select a case first", parent=win)
+            return
+        vals = tree.item(sel[0], "values")
+        for r in INSTALLMENT_CASES:
+            if str(r.get("id")) == str(vals[-1]):
+                open_installment_case_detail(r, refresh)
+                break
 
     def open_installment_chart(tree, win):
         sel = tree.selection()
@@ -875,16 +996,45 @@ def installment_window(parent):
         tree2.tag_configure("odd",  background=BG_ROW_ALT)
 
         balance_fixed = vals[6]
+        case_id_chart = str(vals[-1])
 
-        for i in range(1, 13):
-            tree2.insert("", "end", values=(
-                i,
-                f"30/{str(i).zfill(2)}/2024",
-                "",
-                "",
-                "",
-                balance_fixed
-            ), tags=("even" if i % 2 == 0 else "odd",))
+        # Load saved payments from DB if they exist
+        saved_payments = []
+        try:
+            case_id_int = int(case_id_chart)
+            saved_payments = db.get_installment_payments(case_id_int)
+        except Exception:
+            pass
+
+        no_inst = 12
+        try:
+            for r in INSTALLMENT_CASES:
+                if str(r.get('id')) == case_id_chart:
+                    no_inst = int(r.get('no_instalments') or r.get('no_inst') or 12)
+                    break
+        except Exception:
+            no_inst = 12
+
+        if saved_payments:
+            for i, p in enumerate(saved_payments):
+                tree2.insert("", "end", values=(
+                    p.get('inst_no', i+1),
+                    p.get('inst_date', ''),
+                    p.get('recv_date', ''),
+                    p.get('receipt_no', ''),
+                    p.get('amount', ''),
+                    p.get('balance', balance_fixed),
+                ), tags=("even" if i % 2 == 0 else "odd",))
+        else:
+            for i in range(1, no_inst + 1):
+                tree2.insert("", "end", values=(
+                    i,
+                    f"30/{str(i).zfill(2)}/2024",
+                    "",
+                    "",
+                    "",
+                    balance_fixed
+                ), tags=("even" if i % 2 == 0 else "odd",))
 
         attach_selection_bar(tree2, tbl_wrap, color=ACCENT2)
 
@@ -944,19 +1094,38 @@ def installment_window(parent):
 
         tree2.bind("<Double-1>", on_double_click)
 
-        btn_bar = tk.Frame(top, bg="white")
+        def save_chart(e=None):
+            rows = []
+            case_id = data.get('id') if isinstance(data, dict) else None
+            # Collect from tree. vals order: (no, inst_date, recv_date, receipt_no, amount, balance)
+            for child in tree2.get_children():
+                v = tree2.item(child, "values")
+                rows.append({
+                    'inst_no':   v[0],
+                    'inst_date': v[1],
+                    'recv_date': v[2],
+                    'receipt_no': v[3],
+                    'amount':    v[4],
+                    'balance':   v[5],
+                })
+            if case_id:
+                db.save_installment_payments(case_id, rows)
+                _reload_all()
+                messagebox.showinfo("Saved", "Installment chart saved to database.", parent=top)
+            else:
+                messagebox.showinfo("Saved", "Installment chart saved.", parent=top)
+
+        btn_bar = tk.Frame(top, bg=BG_PANEL)
         btn_bar.pack(fill="x", padx=10, pady=6)
         tk.Button(btn_bar, text="💾  SAVE  F10", font=(FONT_UI, 9, "bold"),
                   fg=BG, bg=ACCENT2, relief="flat", bd=0, padx=14, pady=6,
                   cursor="hand2",
-                  command=lambda: messagebox.showinfo(
-                      "Saved", "Installment chart saved.", parent=top)
+                  command=save_chart
                   ).pack(side=tk.LEFT, padx=(0, 8))
         tk.Button(btn_bar, text="✕  CLOSE", font=(FONT_UI, 9, "bold"),
-                  fg=ACCENT_RED, bg="white", relief="flat", bd=0, padx=14, pady=6,
+                  fg=ACCENT_RED, bg=BG_PANEL, relief="flat", bd=0, padx=14, pady=6,
                   cursor="hand2", command=top.destroy).pack(side=tk.LEFT)
-        top.bind("<F10>", lambda e: messagebox.showinfo(
-            "Saved", "Installment chart saved.", parent=top))
+        top.bind("<F10>", save_chart)
         top.bind("<Escape>", lambda e: top.destroy())
 
     def delete_case():
@@ -966,9 +1135,8 @@ def installment_window(parent):
         vals = tree.item(sel[0], "values")
         if messagebox.askyesno("Delete", f"Delete case {vals[0]} — {vals[2]}?", parent=win):
             cid = str(vals[-1])
-            for i, r in enumerate(INSTALLMENT_CASES):
-                if str(r.get('id', '')) == cid:
-                    INSTALLMENT_CASES.pop(i); break
+            db.delete_installment_case(int(cid))
+            _reload_all()
             refresh()
 
     def do_search(*_):
@@ -1089,6 +1257,7 @@ def show_table(parent, title, data, subtitle=""):
 # OVERVIEW
 # ═════════════════════════════════════════════════════════════════════════════
 def overview_window(parent):
+    _reload_all()   # refresh stats from DB
     win = tk.Toplevel(parent)
     win.title("Overview — Sandhu Enterprises")
     win.state("zoomed")
@@ -1152,14 +1321,547 @@ def overview_window(parent):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# CREDIT CASE FORM  (one-time payment — no instalments)
+# ═════════════════════════════════════════════════════════════════════════════
+def new_credit_case_form(parent, data=None, on_save_callback=None):
+    """New / Edit form for Credit Cases.
+    Pass data=None for a new case, or a dict to pre-fill for editing.
+    """
+    editing = data is not None
+    win = tk.Toplevel(parent)
+    win.title("Credit Case Details — Sandhu Enterprises")
+    win.state("zoomed")
+    win.configure(bg=BG)
+    apply_dark_titlebar(win)
+
+    if editing:
+        next_id = data.get('id', '?')
+    else:
+        try:
+            next_id = max(int(r.get('id', 0)) for r in CREDIT_CASES) + 1
+        except Exception:
+            next_id = 1
+
+    # ── Top bar ───────────────────────────────────────────────────────────
+    topbar = tk.Frame(win, bg=BG_PANEL)
+    topbar.pack(fill=tk.X)
+    tk.Frame(topbar, bg=ACCENT_RED, width=4).pack(side=tk.LEFT, fill=tk.Y)
+    tb_inner = tk.Frame(topbar, bg=BG_PANEL, padx=18, pady=12)
+    tb_inner.pack(side=tk.LEFT)
+    tk.Label(tb_inner,
+             text="EDIT CASE DETAILS" if editing else "NEW CASE DETAILS",
+             font=(FONT_UI, 15, "bold"), fg=TEXT, bg=BG_PANEL).pack(anchor="w")
+    tk.Label(tb_inner, text="Complete all sections · Press F10 to save",
+             font=(FONT_UI, 9), fg=TEXT_DIM, bg=BG_PANEL).pack(anchor="w")
+
+    badge_f = tk.Frame(topbar, bg=BG_PANEL, padx=20)
+    badge_f.pack(side=tk.RIGHT)
+    tk.Label(badge_f, text="CASE ID", font=(FONT_UI, 8),
+             fg=TEXT_DIM, bg=BG_PANEL).pack()
+    tk.Label(badge_f, text=str(next_id),
+             font=(FONT_MONO, 22, "bold"), fg=ACCENT_RED, bg=BG_PANEL).pack()
+
+    tk.Frame(win, bg=BORDER, height=1).pack(fill=tk.X)
+    make_shortcut_bar(win, [
+        ("ESC", "CANCEL",      ACCENT_RED),
+        ("F10", "SAVE & EXIT", ACCENT2),
+        ("INS", "ADD ROW",     ACCENT_PUR),
+        ("DEL", "DELETE ROW",  ACCENT_YEL),
+    ])
+    tk.Frame(win, bg=BORDER, height=1).pack(fill=tk.X)
+
+    # ── Main paned layout: no scroll needed at 1920×1080 ─────────────────
+    # outer frame fills everything between shortcut bar and action bar
+    outer = tk.Frame(win, bg=BG)
+    outer.pack(fill=tk.BOTH, expand=True, padx=24, pady=12)
+
+    # Two columns: LEFT ~30%  |  RIGHT ~70%
+    outer.grid_columnconfigure(0, weight=3)   # customer + guarantor
+    outer.grid_columnconfigure(1, weight=7)   # item + table
+    outer.grid_rowconfigure(0, weight=1)
+
+    d = data or {}
+    entries = {}
+
+    # ══════════════════════════════════════════════════════════════════════
+    # LEFT COLUMN  — Customer + Guarantor stacked
+    # ══════════════════════════════════════════════════════════════════════
+    left_col = tk.Frame(outer, bg=BG)
+    left_col.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+    left_col.grid_rowconfigure(0, weight=0)
+    left_col.grid_rowconfigure(1, weight=1)
+    left_col.grid_columnconfigure(0, weight=1)
+
+    # ── Customer card ─────────────────────────────────────────────────────
+    cust_card = tk.Frame(left_col, bg=BG_CARD,
+                         highlightbackground=BORDER, highlightthickness=1,
+                         padx=16, pady=12)
+    cust_card.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+    section_header(cust_card, "CUSTOMER DETAILS", ACCENT_RED)
+
+    cg = tk.Frame(cust_card, bg=BG_CARD)
+    cg.pack(fill=tk.X)
+    cg.grid_columnconfigure(1, weight=1)
+    cg.grid_columnconfigure(3, weight=1)
+
+    # FILE NO + DATE on same row
+    tk.Label(cg, text="FILE NO", font=(FONT_UI, 10), fg=TEXT_DIM,
+             bg=BG_CARD).grid(row=0, column=0, sticky="w", pady=5, padx=4)
+    e_fn = make_entry(cg, width=10)
+    e_fn.insert(0, d.get('file_no', ''))
+    e_fn.grid(row=0, column=1, sticky="ew", ipady=7, pady=5, padx=(0, 12))
+    entries['file_no'] = e_fn
+
+    tk.Label(cg, text="DATE", font=(FONT_UI, 10), fg=TEXT_DIM,
+             bg=BG_CARD).grid(row=0, column=2, sticky="w", pady=5, padx=4)
+    e_dt = make_entry(cg, width=13)
+    e_dt.insert(0, d.get('date', 'DD/MM/YYYY'))
+    e_dt.config(fg=TEXT if d.get('date') else TEXT_DIM)
+    e_dt.grid(row=0, column=3, sticky="ew", ipady=7, pady=5)
+    entries['date'] = e_dt
+    e_dt.bind("<FocusIn>",
+              lambda e: (e_dt.delete(0, tk.END), e_dt.config(fg=TEXT))
+                        if e_dt.get() == "DD/MM/YYYY" else None)
+    e_dt.bind("<FocusOut>",
+              lambda e: (e_dt.insert(0, "DD/MM/YYYY"), e_dt.config(fg=TEXT_DIM))
+                        if not e_dt.get() else None)
+
+    for i, (lbl, key) in enumerate([
+        ("ACCOUNT",     "customer"),
+        ("W/O D/O S/O", "relation"),
+        ("ADDRESS",     "address"),
+        ("VILLAGE",     "_village_entry"),
+        ("MOBILE NO",   "mobile_no"),
+        ("REMARKS",     "remarks"),
+    ], start=1):
+        tk.Label(cg, text=lbl, font=(FONT_UI, 10), fg=TEXT_DIM,
+                 bg=BG_CARD, width=12, anchor="w").grid(
+                 row=i, column=0, sticky="w", pady=4, padx=4)
+        if lbl == "VILLAGE":
+            village_var = tk.StringVar(value=d.get('village', ''))
+            entries['village'] = village_var
+            village_vals = db.get_villages()
+            ttk.Combobox(cg, textvariable=village_var, values=village_vals,
+                         style="Dark.TCombobox", font=(FONT_UI, 10), width=26
+                         ).grid(row=i, column=1, columnspan=3, sticky="ew",
+                                ipady=5, pady=4, padx=(0, 4))
+        else:
+            e = make_entry(cg, width=26)
+            e.insert(0, d.get(key, ''))
+            e.grid(row=i, column=1, columnspan=3, sticky="ew",
+                   ipady=7, pady=4, padx=(0, 4))
+            entries[key] = e
+
+    # ── Guarantor card ────────────────────────────────────────────────────
+    guar_card = tk.Frame(left_col, bg=BG_CARD,
+                          highlightbackground=BORDER, highlightthickness=1,
+                          padx=16, pady=12)
+    guar_card.grid(row=1, column=0, sticky="nsew")
+    section_header(guar_card, "FIRST GUARANTOR PARTICULARS", ACCENT)
+
+    gg = tk.Frame(guar_card, bg=BG_CARD)
+    gg.pack(fill=tk.X)
+    gg.grid_columnconfigure(1, weight=1)
+
+    for i, (lbl, key) in enumerate([
+        ("NAME",        "g1_name"),
+        ("W/O D/O S/O", "g1_relation"),
+        ("ADDRESS",     "g1_address"),
+        ("VILLAGE",     "g1_village"),
+        ("MOBILE NO",   "g1_mobile"),
+        ("REMARKS",     "g1_remarks"),
+    ]):
+        tk.Label(gg, text=lbl, font=(FONT_UI, 10), fg=TEXT_DIM,
+                 bg=BG_CARD, width=12, anchor="w").grid(
+                 row=i, column=0, sticky="w", pady=5, padx=4)
+        e = make_entry(gg, width=26)
+        e.insert(0, d.get(key, ''))
+        e.grid(row=i, column=1, sticky="ew", ipady=7, pady=5, padx=(0, 4))
+        entries[key] = e
+
+    # ══════════════════════════════════════════════════════════════════════
+    # RIGHT COLUMN — Item Particulars + Photo + Payment Table
+    # ══════════════════════════════════════════════════════════════════════
+    right_col = tk.Frame(outer, bg=BG)
+    right_col.grid(row=0, column=1, sticky="nsew")
+    right_col.grid_rowconfigure(1, weight=1)   # table expands
+    right_col.grid_columnconfigure(0, weight=1)
+
+    # ── Item Particulars card (top) ───────────────────────────────────────
+    item_card = tk.Frame(right_col, bg=BG_CARD,
+                         highlightbackground=BORDER, highlightthickness=1,
+                         padx=16, pady=12)
+    item_card.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+    section_header(item_card, "ITEM PARTICULARS", ACCENT_PUR)
+
+    # item_card has fields on the left and photo on the right
+    item_inner = tk.Frame(item_card, bg=BG_CARD)
+    item_inner.pack(fill=tk.X)
+    item_inner.grid_columnconfigure(0, weight=1)
+    item_inner.grid_columnconfigure(1, weight=0)
+
+    ig = tk.Frame(item_inner, bg=BG_CARD)
+    ig.grid(row=0, column=0, sticky="nsew", padx=(0, 16))
+    ig.grid_columnconfigure(1, weight=1)
+
+    def money_entry(parent, var, row, label, editable=True, color=ACCENT_RED):
+        tk.Label(parent, text=label, font=(FONT_UI, 10), fg=TEXT_DIM,
+                 bg=BG_CARD, width=16, anchor="w").grid(
+                 row=row, column=0, sticky="w", pady=6, padx=4)
+        state = "normal" if editable else "readonly"
+        rbg   = BG_INPUT if editable else BG_CARD
+        e = tk.Entry(parent, textvariable=var, state=state,
+                     font=(FONT_MONO, 11, "bold"), fg=color,
+                     bg=rbg, readonlybackground=rbg,
+                     insertbackground=ACCENT, relief="flat",
+                     highlightthickness=1, highlightcolor=ACCENT,
+                     highlightbackground=BORDER, width=20)
+        e.grid(row=row, column=1, sticky="ew", ipady=8, pady=6, padx=(0, 8))
+        return e
+
+    amount_var  = tk.StringVar(value=d.get('amount', ''))
+    receipt_var = tk.StringVar(value=d.get('total_receipt', '0.00'))
+    balance_var = tk.StringVar(value=d.get('balance', '0.00'))
+
+    money_entry(ig, amount_var,  0, "AMOUNT",         editable=True)
+    money_entry(ig, receipt_var, 1, "TOTAL RECEIPT",  editable=False)
+    money_entry(ig, balance_var, 2, "BALANCE AMOUNT", editable=False)
+    entries['amount'] = amount_var
+
+    # NEXT DUE DATE — highlighted
+    tk.Label(ig, text="NEXT DUE DATE", font=(FONT_UI, 10, "bold"), fg=ACCENT_PUR,
+             bg=BG_CARD, width=16, anchor="w").grid(row=3, column=0, sticky="w", pady=6, padx=4)
+    e_due = make_entry(ig, width=20)
+    e_due.insert(0, d.get('next_due_date', ''))
+    e_due.grid(row=3, column=1, sticky="ew", ipady=7, pady=6, padx=(0, 8))
+    entries['next_due_date'] = e_due
+
+    # Photo placeholder — right side of item card
+    photo_frame = tk.Frame(item_inner, bg=BG_CARD,
+                           highlightbackground=BORDER, highlightthickness=1,
+                           width=160, height=160)
+    photo_frame.grid(row=0, column=1, sticky="n", pady=(0, 4))
+    photo_frame.grid_propagate(False)
+    ph_canvas = tk.Canvas(photo_frame, bg=BG_INPUT, highlightthickness=0)
+    ph_canvas.pack(fill=tk.BOTH, expand=True)
+
+    def draw_x(e=None):
+        ph_canvas.delete("all")
+        w = ph_canvas.winfo_width() or 158
+        h = ph_canvas.winfo_height() or 158
+        ph_canvas.create_rectangle(2, 2, w-2, h-2, outline=BORDER)
+        ph_canvas.create_line(2, 2, w-2, h-2, fill=BORDER)
+        ph_canvas.create_line(w-2, 2, 2, h-2, fill=BORDER)
+        ph_canvas.create_text(w//2, h//2, text="No Photo",
+                              fill=TEXT_DIM, font=(FONT_UI, 10))
+    ph_canvas.bind("<Configure>", draw_x)
+    ph_canvas.after(150, draw_x)
+
+    # ── PAYMENT TABLE ─────────────────────────────────────────────────────
+    # ── Payment table (fills remaining right-column height) ───────────────
+    tbl_card = tk.Frame(right_col, bg=BG_CARD,
+                        highlightbackground=BORDER, highlightthickness=1,
+                        padx=16, pady=12)
+    tbl_card.grid(row=1, column=0, sticky="nsew")
+    tbl_card.grid_rowconfigure(1, weight=1)
+    tbl_card.grid_columnconfigure(0, weight=1)
+    section_header(tbl_card, "SALE / RECEIPT ENTRIES", ACCENT2)
+
+    tbl_cols   = ("description", "date", "sale_amt", "receipt")
+    tbl_heads  = ("SALE / RECEIPT DESCRIPTION", "DATE", "SALE AMOUNT", "RECEIPT")
+
+    tbl_wrap = tk.Frame(tbl_card, bg=BORDER, bd=1)
+    tbl_wrap.grid(row=1, column=0, sticky="nsew")
+    tbl_wrap.grid_rowconfigure(0, weight=1)
+    tbl_wrap.grid_columnconfigure(0, weight=1)
+
+    sale_tree = ttk.Treeview(tbl_wrap, columns=tbl_cols, show="headings",
+                              style="T.Treeview")
+    # Column widths proportional to ~1340px available (70% of 1920 minus padding)
+    col_weights = {"description": 5, "date": 2, "sale_amt": 2, "receipt": 2}
+    for col, head in zip(tbl_cols, tbl_heads):
+        sale_tree.heading(col, text=head)
+        sale_tree.column(col,
+                         anchor="w" if col == "description" else "center",
+                         stretch=True, minwidth=80)
+    sale_tree.tag_configure("even", background=BG_CARD)
+    sale_tree.tag_configure("odd",  background=BG_ROW_ALT)
+
+    # Pre-fill rows from existing data or start with one blank row
+    existing_rows = d.get('payment_rows', [("", "", "", "")])
+    for i, row in enumerate(existing_rows):
+        sale_tree.insert("", "end", values=row,
+                         tags=("even" if i % 2 == 0 else "odd",))
+
+    vsb2 = tk.Scrollbar(tbl_wrap, orient="vertical", command=sale_tree.yview)
+    sale_tree.configure(yscrollcommand=vsb2.set)
+    vsb2.grid(row=0, column=1, sticky="ns")
+    sale_tree.grid(row=0, column=0, sticky="nsew")
+
+    # Totals footer — right-aligned to match columns
+    footer = tk.Frame(tbl_card, bg=BG_CARD)
+    footer.grid(row=2, column=0, sticky="ew", pady=(4, 0))
+    footer.grid_columnconfigure(0, weight=5)   # description spacer
+    footer.grid_columnconfigure(1, weight=2)   # date spacer
+    footer.grid_columnconfigure(2, weight=2)   # sale total
+    footer.grid_columnconfigure(3, weight=2)   # receipt total
+
+    tk.Label(footer, text="TOTAL", font=(FONT_UI, 9, "bold"),
+             fg=TEXT_DIM, bg=BG_CARD, anchor="e").grid(row=0, column=1, sticky="e", padx=4)
+    sale_total_lbl = tk.Label(footer, text="0.00",
+                               font=(FONT_MONO, 11, "bold"), fg=ACCENT2,
+                               bg=BG_CARD, anchor="center")
+    sale_total_lbl.grid(row=0, column=2, sticky="ew", padx=4)
+    receipt_total_lbl = tk.Label(footer, text="0.00",
+                                  font=(FONT_MONO, 11, "bold"), fg=ACCENT_RED,
+                                  bg=BG_CARD, anchor="center")
+    receipt_total_lbl.grid(row=0, column=3, sticky="ew", padx=4)
+
+    
+    
+    
+    # ── Inline cell editing ───────────────────────────────────────────────
+    
+    _edit = [None]
+    def update_totals():
+        sale_total = 0
+        receipt_total = 0
+
+        for item in sale_tree.get_children():
+            vals = sale_tree.item(item, "values")
+
+            try:
+                sale_total += float(vals[2] or 0)
+            except:
+                pass
+
+            try:
+                receipt_total += float(vals[3] or 0)
+            except:
+                pass
+
+        sale_total_lbl.config(text=f"{sale_total:.2f}")
+        receipt_total_lbl.config(text=f"{receipt_total:.2f}")
+    
+    def add_row(event=None):
+        i = len(sale_tree.get_children())
+        sale_tree.insert("", "end", values=("", "", "", ""),
+                        tags=("even" if i % 2 == 0 else "odd",))
+
+    win.bind("<Insert>", add_row)
+
+    def delete_row(event=None):
+        sel = sale_tree.selection()
+        if sel:
+            sale_tree.delete(sel[0])
+            update_totals()
+
+    win.bind("<Delete>", delete_row)
+
+    def on_double_click(event):
+        item = sale_tree.identify_row(event.y)
+        col  = sale_tree.identify_column(event.x)
+
+        if not item:
+            return
+
+        col_index = int(col.replace("#", "")) - 1
+
+        if _edit[0]:
+            _edit[0].destroy()
+
+        bbox = sale_tree.bbox(item, col)
+        if not bbox:
+            return
+
+        x, y, width, height = bbox
+        value = sale_tree.item(item, "values")[col_index]
+
+        entry = tk.Entry(sale_tree, font=(FONT_UI, 10),
+                        justify="center" if col_index != 0 else "left")
+        entry.place(x=x, y=y, width=width, height=height)
+        entry.insert(0, value)
+        entry.focus()
+
+        _edit[0] = entry
+
+        def save_edit(e=None):
+            values = list(sale_tree.item(item, "values"))
+            values[col_index] = entry.get()
+            sale_tree.item(item, values=values)
+            entry.destroy()
+            _edit[0] = None
+            update_totals()
+
+        entry.bind("<Return>", save_edit)
+        entry.bind("<FocusOut>", save_edit)
+
+    sale_tree.bind("<Double-1>", on_double_click)
+
+
+
+    def on_dbl(event):
+        row = sale_tree.identify_row(event.y)
+        col = sale_tree.identify_column(event.x)
+        if not row: return
+        if _edit[0]:
+            _edit[0].destroy(); _edit[0] = None
+        bbox = sale_tree.bbox(row, col)
+        if not bbox: return
+        bx, by, bw, bh = bbox
+        ci = int(col.replace("#", "")) - 1
+        cur = sale_tree.item(row, "values")[ci]
+        ent = tk.Entry(sale_tree, font=(FONT_UI, 10), fg=TEXT, bg=BG_INPUT,
+                       insertbackground=ACCENT, relief="flat",
+                       highlightthickness=1, highlightcolor=ACCENT,
+                       highlightbackground=ACCENT)
+        ent.place(x=bx, y=by, width=bw, height=bh)
+        ent.insert(0, cur)
+        ent.select_range(0, tk.END)
+        ent.focus_set()
+        _edit[0] = ent
+
+        def commit(e=None):
+            vals = list(sale_tree.item(row, "values"))
+            vals[ci] = ent.get()
+            sale_tree.item(row, values=vals)
+            ent.destroy(); _edit[0] = None
+            recalc_totals()
+
+        ent.bind("<Return>",   commit)
+        ent.bind("<Tab>",      commit)
+        ent.bind("<Escape>",   lambda e: (ent.destroy(), _edit.__setitem__(0, None)))
+        ent.bind("<FocusOut>", commit)
+
+    sale_tree.bind("<Double-1>", on_dbl)
+
+    def recalc_totals():
+        sale_tot = 0.0
+        rec_tot  = 0.0
+        for item in sale_tree.get_children():
+            vals = sale_tree.item(item, "values")
+            try: sale_tot += float(str(vals[2]).replace(',', '') or 0)
+            except: pass
+            try: rec_tot  += float(str(vals[3]).replace(',', '') or 0)
+            except: pass
+        sale_total_lbl.config(text=f"{sale_tot:,.2f}")
+        receipt_total_lbl.config(text=f"{rec_tot:,.2f}")
+        receipt_var.set(f"{rec_tot:.2f}")
+        try:
+            amt = float(str(amount_var.get()).replace(',', '') or 0)
+            balance_var.set(f"{amt - rec_tot:.2f}")
+        except:
+            balance_var.set("0.00")
+
+    amount_var.trace_add("write", lambda *_: recalc_totals())
+
+    def add_row(e=None):
+        n = len(sale_tree.get_children())
+        sale_tree.insert("", "end", values=("", "", "", ""),
+                         tags=("even" if n % 2 == 0 else "odd",))
+
+    def del_row(e=None):
+        sel = sale_tree.selection()
+        if sel:
+            sale_tree.delete(sel[0])
+            recalc_totals()
+
+    btn_row = tk.Frame(tbl_card, bg=BG_CARD)
+    btn_row.pack(fill=tk.X, pady=(6, 0))
+    tk.Button(btn_row, text="＋  Add Row  INS", font=(FONT_UI, 9, "bold"),
+              fg=BG, bg=ACCENT_PUR, relief="flat", bd=0, padx=12, pady=5,
+              cursor="hand2", command=add_row).pack(side=tk.LEFT, padx=(0, 8))
+    tk.Button(btn_row, text="−  Delete Row  DEL", font=(FONT_UI, 9, "bold"),
+              fg=BG, bg=ACCENT_YEL, relief="flat", bd=0, padx=12, pady=5,
+              cursor="hand2", command=del_row).pack(side=tk.LEFT)
+
+    win.bind("<Insert>", add_row)
+    win.bind("<Delete>", del_row)
+
+    # initial totals
+    recalc_totals()
+
+    # ── Action bar ────────────────────────────────────────────────────────
+    tk.Frame(win, bg=BORDER, height=1).pack(fill=tk.X, side=tk.BOTTOM)
+    action_bar = tk.Frame(win, bg=BG_PANEL, pady=12, padx=24)
+    action_bar.pack(fill=tk.X, side=tk.BOTTOM)
+
+    def get(key):
+        v = entries.get(key)
+        if v is None: return ""
+        if isinstance(v, tk.StringVar): return v.get()
+        if isinstance(v, tk.Entry):     return v.get()
+        return ""
+
+    def save_and_exit(e=None):
+        file_no = get('file_no').strip()
+        if not file_no:
+            messagebox.showwarning("Required", "FILE NO is required.", parent=win)
+            return
+
+        rows = [sale_tree.item(i, "values") for i in sale_tree.get_children()]
+
+        record = {
+            'id':             next_id if editing else None,
+            'file_no':        file_no,
+            'date':           get('date'),
+            'customer':       get('customer'),
+            'relation':       get('relation'),
+            'address':        get('address'),
+            'village':        get('village'),
+            'mobile_no':      get('mobile_no'),
+            'remarks':        get('remarks'),
+            'amount':         get('amount'),
+            'finance_amt':    get('amount'),
+            'total_receipt':  receipt_var.get(),
+            'balance':        balance_var.get(),
+            'next_due_date':  get('next_due_date'),
+            'g1_name':        get('g1_name'),
+            'g1_relation':    get('g1_relation'),
+            'g1_address':     get('g1_address'),
+            'g1_village':     get('g1_village'),
+            'g1_mobile':      get('g1_mobile'),
+            'g1_remarks':     get('g1_remarks'),
+            'payment_rows':   rows,
+        }
+
+        saved_id = db.save_credit_case(record)
+        record['id'] = saved_id
+        _reload_all()
+
+        if on_save_callback:
+            on_save_callback(record)
+
+        messagebox.showinfo("Saved ✓",
+                            f"Case '{file_no}' saved!\nCase ID: {next_id}",
+                            parent=win)
+        win.destroy()
+
+    tk.Button(action_bar, text="✕  CANCEL  ESC",
+              command=win.destroy,
+              font=(FONT_UI, 11, "bold"), fg=ACCENT_RED, bg=BG_CARD,
+              activeforeground=ACCENT_RED, activebackground=BG_PANEL,
+              relief="flat", bd=0, cursor="hand2", padx=20, pady=10,
+              highlightthickness=1, highlightbackground=ACCENT_RED
+              ).pack(side=tk.LEFT, padx=(0, 16))
+
+    tk.Button(action_bar, text="💾  SAVE & EXIT  F10",
+              command=save_and_exit,
+              font=(FONT_UI, 11, "bold"), fg=BG, bg=ACCENT2,
+              activeforeground=BG, activebackground="#2ebd68",
+              relief="flat", bd=0, cursor="hand2", padx=24, pady=10,
+              ).pack(side=tk.LEFT)
+
+    win.bind("<F10>",    save_and_exit)
+    win.bind("<Escape>", lambda e: win.destroy())
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # MODULE WRAPPERS
 # ═════════════════════════════════════════════════════════════════════════════
-def due_payments_window(parent):
-    show_table(parent, "Due Payments", DUE_PAYMENTS, "Overdue payment records")
-
 def credit_cases_window(parent):
     win = tk.Toplevel(parent)
-    win.title("Installment Cases — Sandhu Enterprises")
+    win.title("Credit Cases — Sandhu Enterprises")
     win.state("zoomed")
     win.configure(bg=BG)
     apply_dark_titlebar(win)
@@ -1167,21 +1869,21 @@ def credit_cases_window(parent):
 
     titlebar = tk.Frame(win, bg=BG_PANEL)
     titlebar.pack(fill=tk.X)
-    tk.Frame(titlebar, bg=ACCENT, width=4).pack(side=tk.LEFT, fill=tk.Y)
+    tk.Frame(titlebar, bg=ACCENT_RED, width=4).pack(side=tk.LEFT, fill=tk.Y)
     ti = tk.Frame(titlebar, bg=BG_PANEL, padx=18, pady=12)
     ti.pack(side=tk.LEFT)
-    tk.Label(ti, text="NEW CASES", font=(FONT_UI, 15, "bold"),
+    tk.Label(ti, text="CREDIT CASES", font=(FONT_UI, 15, "bold"),
              fg=TEXT, bg=BG_PANEL).pack(anchor="w")
-    tk.Label(ti, text="Installment Case Management",
+    tk.Label(ti, text="Credit Case Management",
              font=(FONT_UI, 9), fg=TEXT_DIM, bg=BG_PANEL).pack(anchor="w")
     tk.Frame(win, bg=BORDER, height=1).pack(fill=tk.X)
 
     make_shortcut_bar(win, [
-        ("F1",  "NEW CASE",              ACCENT2),
-        ("F2",  "OPEN CASE DETAILS",     ACCENT_PUR),
-        ("ESC", "CLOSE",                 ACCENT_RED),
-        ("F8",  "DELETE CASE",           ACCENT_YEL),
-        ("F9",  "SEARCH",                "#36bfd9"),
+        ("F1",  "NEW CASE",          ACCENT2),
+        ("F2",  "OPEN CASE DETAILS", ACCENT_PUR),
+        ("ESC", "CLOSE",             ACCENT_RED),
+        ("F8",  "DELETE CASE",       ACCENT_YEL),
+        ("F9",  "SEARCH",            "#36bfd9"),
     ])
     tk.Frame(win, bg=BORDER, height=1).pack(fill=tk.X)
 
@@ -1202,7 +1904,7 @@ def credit_cases_window(parent):
     se.bind("<FocusOut>",
             lambda e: (se.insert(0, PH), se.config(fg=TEXT_DIM)) if not se.get() else None)
 
-    rec_badge = tk.Label(sf, text=f"  {len(INSTALLMENT_CASES)} records  ",
+    rec_badge = tk.Label(sf, text=f"  {len(CREDIT_CASES)} records  ",
                          font=(FONT_UI, 9, "bold"), fg=ACCENT, bg="#1b2e4a",
                          padx=6, pady=4)
     rec_badge.pack(side=tk.LEFT)
@@ -1220,7 +1922,7 @@ def credit_cases_window(parent):
     tree.tag_configure("even", background=BG_CARD)
     tree.tag_configure("odd",  background=BG_ROW_ALT)
 
-    all_data = [tuple(r.get(c, "") for c in INST_COLS) for r in INSTALLMENT_CASES]
+    all_data = [tuple(r.get(c, "") for c in INST_COLS) for r in CREDIT_CASES]
 
     def populate(rows):
         for item in tree.get_children(): tree.delete(item)
@@ -1230,19 +1932,16 @@ def credit_cases_window(parent):
         rec_badge.config(text=f"  {len(rows)} records  ")
 
     populate(all_data)
-    attach_selection_bar(tree, to, color=ACCENT)
-
-    
+    attach_selection_bar(tree, to, color=ACCENT_RED)
 
     tree.grid(row=0, column=0, sticky="nsew")
-    
     tb.grid_rowconfigure(0, weight=1)
     tb.grid_columnconfigure(0, weight=1)
 
     # Status bar
     try:
-        tf_ = sum(float(str(r.get('finance_amt', 0)).replace(',', '') or 0) for r in INSTALLMENT_CASES)
-        tb_ = sum(float(str(r.get('balance', 0)).replace(',', '') or 0)     for r in INSTALLMENT_CASES)
+        tf_ = sum(float(str(r.get('finance_amt', 0)).replace(',', '') or 0) for r in CREDIT_CASES)
+        tb_ = sum(float(str(r.get('balance', 0)).replace(',', '') or 0)     for r in CREDIT_CASES)
     except Exception:
         tf_ = tb_ = 0.0
 
@@ -1273,7 +1972,7 @@ def credit_cases_window(parent):
               relief="flat", bd=0, padx=10, pady=4, cursor="hand2",
               command=do_goto).pack(side=tk.LEFT, padx=6)
 
-    pending_lbl = tk.Label(sbar, text=f"NO OF PENDING CASES  {len(INSTALLMENT_CASES)}",
+    pending_lbl = tk.Label(sbar, text=f"NO OF PENDING CASES  {len(CREDIT_CASES)}",
                            font=(FONT_UI, 9, "bold"), fg=ACCENT_YEL, bg=BG_PANEL)
     pending_lbl.pack(side=tk.LEFT, padx=30)
 
@@ -1289,162 +1988,12 @@ def credit_cases_window(parent):
     # ── Actions ───────────────────────────────────────────────────────────
     def refresh():
         all_data.clear()
-        all_data.extend(tuple(r.get(c, "") for c in INST_COLS) for r in INSTALLMENT_CASES)
+        all_data.extend(tuple(r.get(c, "") for c in INST_COLS) for r in CREDIT_CASES)
         do_search()
-        pending_lbl.config(text=f"NO OF PENDING CASES  {len(INSTALLMENT_CASES)}")
+        pending_lbl.config(text=f"NO OF PENDING CASES  {len(CREDIT_CASES)}")
 
     def new_case(e=None):
-        
-        root = tk.Tk()
-        root.title("New Case Details")
-        root.geometry("1200x650")
-        root.configure(bg="#f4f6f8")
-
-        # ---------- MAIN CONTAINERS ----------
-        left_frame = tk.Frame(root, bg="white", bd=2, relief="groove")
-        left_frame.place(x=10, y=10, width=380, height=600)
-
-        right_frame = tk.Frame(root, bg="white", bd=2, relief="groove")
-        right_frame.place(x=400, y=10, width=780, height=600)
-
-        # ---------- LEFT SIDE (CUSTOMER) ----------
-        tk.Label(left_frame, text="NEW CASE DETAILS", font=("Arial", 12, "bold"), bg="white").pack(pady=5)
-
-        def add_field(parent, label):
-            frame = tk.Frame(parent, bg="white")
-            frame.pack(fill="x", padx=10, pady=3)
-            tk.Label(frame, text=label, width=12, anchor="w", bg="white").pack(side="left")
-            entry = tk.Entry(frame)
-            entry.pack(side="left", fill="x", expand=True)
-            return entry
-
-        file_no = add_field(left_frame, "FILE NO")
-        date = add_field(left_frame, "DATE")
-        account = add_field(left_frame, "ACCOUNT")
-        father = add_field(left_frame, "W/O D/O S/O")
-        address = add_field(left_frame, "ADDRESS")
-        village = add_field(left_frame, "VILLAGE")
-        mobile = add_field(left_frame, "MOBILE")
-        remarks = add_field(left_frame, "REMARKS")
-
-        # ---------- GUARANTOR ----------
-        tk.Label(left_frame, text="FIRST GUARANTOR PARTICULARS",
-                font=("Arial", 10, "bold"), bg="white").pack(pady=10)
-
-        g_name = add_field(left_frame, "NAME")
-        g_father = add_field(left_frame, "W/O D/O S/O")
-        g_address = add_field(left_frame, "ADDRESS")
-        g_village = add_field(left_frame, "VILLAGE")
-        g_mobile = add_field(left_frame, "MOBILE")
-        g_remarks = add_field(left_frame, "REMARKS")
-
-        # ---------- RIGHT SIDE (ITEM DETAILS) ----------
-        tk.Label(right_frame, text="ITEM PARTICULARS",
-                font=("Arial", 12, "bold"), bg="white").pack(pady=5)
-
-        top_frame = tk.Frame(right_frame, bg="white")
-        top_frame.pack(fill="x", padx=10)
-
-        def add_small(parent, label):
-            frame = tk.Frame(parent, bg="white")
-            frame.pack(side="left", padx=10)
-            tk.Label(frame, text=label, bg="white").pack()
-            e = tk.Entry(frame, width=12)
-            e.pack()
-            return e
-
-        item_entry = add_small(top_frame, "ITEM")
-        amount     = add_small(top_frame, "AMOUNT")
-        receipt_t  = add_small(top_frame, "TOTAL RECEIPT")
-        balance    = add_small(top_frame, "BALANCE")
-
-        # NEXT DUE DATE
-        due_frame = tk.Frame(right_frame, bg="white")
-        due_frame.pack(pady=10)
-
-        tk.Label(due_frame, text="NEXT DUE DATE", bg="white").pack(side="left")
-        due_entry = tk.Entry(due_frame)
-        due_entry.pack(side="left", padx=10)
-
-        # ---------- TABLE ----------
-        tbl_cols = ("item", "date", "sale_amt", "receipt")
-        sale_tree = ttk.Treeview(right_frame, columns=tbl_cols, show="headings", height=10)
-
-        sale_tree.heading("item",     text="ITEM")
-        sale_tree.heading("date",     text="DATE")
-        sale_tree.heading("sale_amt", text="SALE AMT")
-        sale_tree.heading("receipt",  text="RECEIPT")
-
-        for c in tbl_cols:
-            sale_tree.column(c, anchor="center", width=160)
-
-        sale_tree.pack(fill="both", expand=True, padx=10, pady=5)
-
-        # SAMPLE ROW
-        sale_tree.insert("", "end", values=("", "30/07/2024", "15200", "200"))
-
-        # --- Inline editing for the sale table ---
-        _sale_edit = [None]
-
-        def on_sale_dbl(event):
-            row = sale_tree.identify_row(event.y)
-            col = sale_tree.identify_column(event.x)
-            if not row:
-                return
-            if _sale_edit[0]:
-                _sale_edit[0].destroy()
-                _sale_edit[0] = None
-            bbox = sale_tree.bbox(row, col)
-            if not bbox:
-                return
-            bx, by, bw, bh = bbox
-            ci = int(col.replace("#", "")) - 1
-            cur = sale_tree.item(row, "values")[ci]
-            ent = tk.Entry(sale_tree, font=("Segoe UI", 10),
-                           relief="flat", highlightthickness=1,
-                           highlightcolor="#60a5fa", highlightbackground="#60a5fa")
-            ent.place(x=bx, y=by, width=bw, height=bh)
-            ent.insert(0, cur)
-            ent.select_range(0, tk.END)
-            ent.focus_set()
-            _sale_edit[0] = ent
-
-            def commit(e=None):
-                vals = list(sale_tree.item(row, "values"))
-                vals[ci] = ent.get()
-                sale_tree.item(row, values=vals)
-                ent.destroy()
-                _sale_edit[0] = None
-
-            ent.bind("<Return>",   commit)
-            ent.bind("<Tab>",      commit)
-            ent.bind("<Escape>",   lambda e: (ent.destroy(), _sale_edit.__setitem__(0, None)))
-            ent.bind("<FocusOut>", commit)
-
-        sale_tree.bind("<Double-1>", on_sale_dbl)
-
-        def add_sale_row():
-            sale_tree.insert("", "end", values=("", "", "", ""))
-
-        tk.Button(right_frame, text="＋  Add Row", font=("Segoe UI", 9),
-                  fg="white", bg="#60a5fa", relief="flat", bd=0,
-                  padx=10, pady=4, cursor="hand2",
-                  command=add_sale_row).pack(anchor="w", padx=10, pady=(0, 6))
-
-        # ---------- BUTTONS ----------
-        btn_frame = tk.Frame(root, bg="#f4f6f8")
-        btn_frame.place(x=10, y=620)
-
-        tk.Button(btn_frame, text="CANCEL Esc", width=15, bg="#ddd",
-                  command=root.destroy).pack(side="left", padx=10)
-        tk.Button(btn_frame, text="SAVE & EXIT F10", width=20,
-                  bg="#4CAF50", fg="white",
-                  command=lambda: messagebox.showinfo(
-                      "Saved", "Case details saved.", parent=root)
-                  ).pack(side="left")
-        root.bind("<Escape>", lambda e: root.destroy())
-        root.bind("<F10>",    lambda e: messagebox.showinfo(
-            "Saved", "Case details saved.", parent=root))
+        new_credit_case_form(win, on_save_callback=lambda _: win.after(100, refresh))
 
     def delete_case():
         sel = tree.selection()
@@ -1453,171 +2002,360 @@ def credit_cases_window(parent):
         vals = tree.item(sel[0], "values")
         if messagebox.askyesno("Delete", f"Delete case {vals[0]} — {vals[2]}?", parent=win):
             cid = str(vals[-1])
-            for i, r in enumerate(INSTALLMENT_CASES):
-                if str(r.get('id', '')) == cid:
-                    INSTALLMENT_CASES.pop(i); break
+            db.delete_credit_case(int(cid))
+            _reload_all()
             refresh()
-    
-    def open_case_detail(data):
 
-        root = tk.Toplevel()
-        root.title("Case Details")
-        root.geometry("1200x650")
-        root.configure(bg="#f4f6f8")
+    def do_search(*_):
+        q = sv.get().lower().strip()
+        if q == PH.lower():
+            q = ""
+        populate([r for r in all_data if not q or any(q in str(v).lower() for v in r)])
 
-        # ---------- MAIN CONTAINERS ----------
-        left_frame = tk.Frame(root, bg="white", bd=2, relief="groove")
-        left_frame.place(x=10, y=10, width=380, height=600)
+    sv.trace_add("write", do_search)
 
-        right_frame = tk.Frame(root, bg="white", bd=2, relief="groove")
-        right_frame.place(x=400, y=10, width=780, height=600)
+    def open_selected_case(e=None):
+        sel = tree.selection()
+        if not sel:
+            messagebox.showinfo("Select", "Select a case first", parent=win)
+            return
+        vals = tree.item(sel[0], "values")
+        for r in CREDIT_CASES:
+            if str(r.get("id")) == str(vals[-1]):
+                new_credit_case_form(win, data=r, on_save_callback=lambda _: win.after(100, refresh))
+                break
 
-        # ---------- LEFT SIDE (CUSTOMER) ----------
-        tk.Label(left_frame, text="CASE DETAILS", font=("Arial", 12, "bold"), bg="white").pack(pady=5)
+    win.bind("<F1>",     lambda e: new_case())
+    win.bind("<F2>",     lambda e: open_selected_case())
+    win.bind("<F8>",     lambda e: delete_case())
+    win.bind("<F9>",     lambda e: se.focus_set())
+    win.bind("<Escape>", lambda e: win.destroy())
+    tree.bind("<Double-1>", lambda e: open_selected_case())
 
-        def add_field(parent, label):
-            frame = tk.Frame(parent, bg="white")
-            frame.pack(fill="x", padx=10, pady=3)
-            tk.Label(frame, text=label, width=12, anchor="w", bg="white").pack(side="left")
-            entry = tk.Entry(frame)
-            entry.pack(side="left", fill="x", expand=True)
-            return entry
 
-        # CUSTOMER
-        file_no = add_field(left_frame, "FILE NO")
-        file_no.insert(0, data.get("file_no", ""))
+def due_report_window(parent):
+    """Due Report — Credit cases that still have a balance outstanding."""
+    win = tk.Toplevel(parent)
+    win.title("Due Report — Credit Cases — Sandhu Enterprises")
+    win.state("zoomed")
+    win.configure(bg=BG)
+    apply_dark_titlebar(win)
+    build_style()
 
-        date = add_field(left_frame, "DATE")
-        date.insert(0, data.get("date", ""))
+    tk.Frame(win, bg=ACCENT_YEL, width=4).pack(side=tk.LEFT, fill=tk.Y)
+    right = tk.Frame(win, bg=BG)
+    right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        account = add_field(left_frame, "ACCOUNT")
-        account.insert(0, data.get("customer", ""))
+    topbar = tk.Frame(right, bg=BG_PANEL, pady=14, padx=20)
+    topbar.pack(fill=tk.X)
+    tk.Label(topbar, text="DUE REPORT — CREDIT CASES",
+             font=(FONT_UI, 16, "bold"), fg=TEXT, bg=BG_PANEL).pack(side=tk.LEFT)
+    tk.Label(topbar, text="  Credit cases with outstanding balance",
+             font=(FONT_UI, 9), fg=TEXT_DIM, bg=BG_PANEL).pack(side=tk.LEFT)
+    tk.Button(topbar, text="✕  Close", command=win.destroy, font=(FONT_UI, 9),
+              fg=TEXT_DIM, bg=BG_PANEL, activeforeground=ACCENT_RED,
+              activebackground=BG_PANEL, relief="flat", bd=0,
+              cursor="hand2", padx=12).pack(side=tk.RIGHT)
 
-        father = add_field(left_frame, "W/O D/O S/O")
-        father.insert(0, data.get("relation", ""))
+    make_shortcut_bar(right, [("ESC", "CLOSE", ACCENT_RED), ("F9", "SEARCH", "#36bfd9"),
+                               ("F5", "REFRESH", ACCENT_YEL)])
+    tk.Frame(right, bg=BORDER, height=1).pack(fill=tk.X)
 
-        address = add_field(left_frame, "ADDRESS")
-        address.insert(0, data.get("address", ""))
+    sf = tk.Frame(right, bg=BG, padx=16, pady=8)
+    sf.pack(fill=tk.X)
+    tk.Label(sf, text="🔍", font=(FONT_UI, 11), fg=TEXT_DIM, bg=BG).pack(side=tk.LEFT)
+    sv = tk.StringVar()
+    se = tk.Entry(sf, textvariable=sv, font=(FONT_UI, 10), fg=TEXT_DIM,
+                  bg=BG_CARD, insertbackground=ACCENT, relief="flat",
+                  highlightthickness=1, highlightcolor=ACCENT,
+                  highlightbackground=BORDER, width=38)
+    se.pack(side=tk.LEFT, ipady=7, padx=(8, 12))
+    PH = "Search by file no, customer, village…"
+    se.insert(0, PH)
+    se.bind("<FocusIn>",  lambda e: (se.delete(0, tk.END), se.config(fg=TEXT)) if se.get() == PH else None)
+    se.bind("<FocusOut>", lambda e: (se.insert(0, PH), se.config(fg=TEXT_DIM)) if not se.get() else None)
 
-        village = add_field(left_frame, "VILLAGE")
-        village.insert(0, data.get("village", ""))
+    rec_badge = tk.Label(sf, text="  0 records  ", font=(FONT_UI, 9, "bold"),
+                         fg=ACCENT, bg="#1b2e4a", padx=6, pady=4)
+    rec_badge.pack(side=tk.LEFT)
 
-        mobile = add_field(left_frame, "MOBILE")
-        mobile.insert(0, data.get("mobile_no", ""))
+    COLS   = ['file_no', 'date', 'customer', 'village', 'mobile_no', 'finance_amt', 'balance', 'next_due_date', 'id']
+    HEADS  = ['File No', 'Date', 'Customer', 'Village', 'Mobile No', 'Finance Amt', 'Balance', '⚠ Next Due Date', 'ID']
+    WIDTHS = [75, 95, 190, 130, 145, 110, 100, 120, 55]
 
-        remarks = add_field(left_frame, "REMARKS")
-        remarks.insert(0, data.get("remarks", ""))
+    tf4 = tk.Frame(right, bg=BG, padx=20)
+    tf4.pack(fill=tk.BOTH, expand=True)
+    border2 = tk.Frame(tf4, bg=BORDER)
+    border2.pack(fill=tk.BOTH, expand=True, pady=8)
+    border2.grid_rowconfigure(0, weight=1)
+    border2.grid_columnconfigure(0, weight=1)
 
-        # ---------- GUARANTOR ----------
-        tk.Label(left_frame, text="FIRST GUARANTOR PARTICULARS",
-                font=("Arial", 10, "bold"), bg="white").pack(pady=10)
+    tree = ttk.Treeview(border2, columns=COLS, show="headings", style="T.Treeview")
+    for col, head, w in zip(COLS, HEADS, WIDTHS):
+        tree.heading(col, text=head)
+        tree.column(col, width=w, minwidth=40,
+                    anchor="center" if col in ('finance_amt','balance') else "w")
+    tree.tag_configure("even",    background=BG_CARD)
+    tree.tag_configure("odd",     background=BG_ROW_ALT)
+    tree.tag_configure("overdue", background="#fff0f0", foreground="#b91c1c")
+    tree.grid(row=0, column=0, sticky="nsew")
+    attach_selection_bar(tree, tf4, color=ACCENT_YEL)
 
-        g_name = add_field(left_frame, "NAME")
-        g_name.insert(0, data.get("g1_name", ""))
+    all_rows = []
 
-        g_father = add_field(left_frame, "W/O D/O S/O")
-        g_father.insert(0, data.get("g1_relation", ""))
+    def load_data():
+        all_rows.clear()
+        for r in db.get_due_report():
+            all_rows.append(tuple(str(r.get(c, '')) for c in COLS))
 
-        g_address = add_field(left_frame, "ADDRESS")
-        g_address.insert(0, data.get("g1_address", ""))
-
-        g_village = add_field(left_frame, "VILLAGE")
-        g_village.insert(0, data.get("g1_village", ""))
-
-        g_mobile = add_field(left_frame, "MOBILE")
-        g_mobile.insert(0, data.get("g1_mobile", ""))
-
-        g_remarks = add_field(left_frame, "REMARKS")
-        g_remarks.insert(0, data.get("g1_remarks", ""))
-
-        # ---------- RIGHT SIDE (ITEM DETAILS) ----------
-        tk.Label(right_frame, text="ITEM PARTICULARS",
-                font=("Arial", 12, "bold"), bg="white").pack(pady=5)
-
-        top_frame = tk.Frame(right_frame, bg="white")
-        top_frame.pack(fill="x", padx=10)
-
-        def add_small(parent, label, value=""):
-            frame = tk.Frame(parent, bg="white")
-            frame.pack(side="left", padx=10)
-            tk.Label(frame, text=label, bg="white").pack()
-            e = tk.Entry(frame, width=12)
-            e.pack()
-            e.insert(0, value)
-            return e
-
-        item_entry = add_small(top_frame, "ITEM", data.get("item", ""))
-        amount     = add_small(top_frame, "AMOUNT", data.get("amount", ""))
-        receipt_t  = add_small(top_frame, "TOTAL RECEIPT", "")
-        balance    = add_small(top_frame, "BALANCE", data.get("balance", ""))
-
-        # NEXT DUE DATE
-        due_frame = tk.Frame(right_frame, bg="white")
-        due_frame.pack(pady=10)
-
-        tk.Label(due_frame, text="NEXT DUE DATE", bg="white").pack(side="left")
-        due_entry = tk.Entry(due_frame)
-        due_entry.pack(side="left", padx=10)
-
-        # ---------- TABLE ----------
-        tbl_cols = ("item", "date", "sale_amt", "receipt")
-        sale_tree = ttk.Treeview(right_frame, columns=tbl_cols, show="headings", height=10)
-
-        sale_tree.heading("item",     text="ITEM")
-        sale_tree.heading("date",     text="DATE")
-        sale_tree.heading("sale_amt", text="SALE AMT")
-        sale_tree.heading("receipt",  text="RECEIPT")
-
-        for c in tbl_cols:
-            sale_tree.column(c, anchor="center", width=160)
-
-        sale_tree.pack(fill="both", expand=True, padx=10, pady=5)
-
-        # sample row (can customize later)
-        sale_tree.insert("", "end", values=(
-            data.get("item", ""),
-            data.get("date", ""),
-            data.get("amount", ""),
-            ""
-        ))
-
-        # ---------- BUTTONS ----------
-        btn_frame = tk.Frame(root, bg="#f4f6f8")
-        btn_frame.place(x=10, y=620)
-
-        tk.Button(btn_frame, text="CANCEL Esc", width=15, bg="#ddd",
-                command=root.destroy).pack(side="left", padx=10)
-
-        tk.Button(btn_frame, text="SAVE & EXIT F10", width=20,
-                bg="#4CAF50", fg="white",
-                command=lambda: messagebox.showinfo(
-                    "Saved", "Changes saved.", parent=root)
-                ).pack(side="left")
-
-        root.bind("<Escape>", lambda e: root.destroy())
-        root.bind("<F10>",    lambda e: messagebox.showinfo(
-            "Saved", "Changes saved.", parent=root))
-
+    def populate(rows):
+        for item in tree.get_children(): tree.delete(item)
+        for i, vals in enumerate(rows):
+            tree.insert("", tk.END, values=vals,
+                        tags=("even" if i % 2 == 0 else "odd",))
+        rec_badge.config(text=f"  {len(rows)} records  ")
 
     def do_search(*_):
         q = sv.get().lower().strip()
         if q == PH.lower(): q = ""
-        populate([r for r in all_data if not q or any(q in str(v).lower() for v in r)])
+        populate([r for r in all_rows if not q or any(q in str(v).lower() for v in r)])
 
     sv.trace_add("write", do_search)
-    win.bind("<F1>",     lambda e: new_case())
-    win.bind("<F2>",     lambda e: open_case_detail())
-    win.bind("<F8>",     lambda e: delete_case())
-    win.bind("<F9>",     lambda e: se.focus_set())
+
+    def refresh(e=None):
+        load_data()
+        do_search()
+        try:
+            tb = sum(float(r[6] or 0) for r in all_rows)
+            bal_lbl.config(text=f"₹ {tb:,.2f}")
+        except Exception:
+            pass
+
+    load_data()
+    populate(all_rows)
+
+    tk.Frame(right, bg=BORDER, height=1).pack(fill=tk.X)
+    sbar = tk.Frame(right, bg=BG_PANEL, pady=7, padx=16)
+    sbar.pack(fill=tk.X)
+    tk.Label(sbar, text="Due Report  ·  Credit cases overdue (next due date passed, balance > 0)",
+             font=(FONT_UI, 9), fg=TEXT_DIM, bg=BG_PANEL).pack(side=tk.LEFT)
+    bf = tk.Frame(sbar, bg=BG_CARD, padx=12, pady=4)
+    bf.pack(side=tk.RIGHT, padx=4)
+    tk.Label(bf, text="Total Balance Due", font=(FONT_UI, 7, "bold"), fg=TEXT_DIM, bg=BG_CARD).pack(anchor="w")
+    try:
+        tb_ = sum(float(r[6] or 0) for r in all_rows)
+    except Exception:
+        tb_ = 0
+    bal_lbl = tk.Label(bf, text=f"₹ {tb_:,.2f}", font=(FONT_MONO, 11, "bold"), fg=ACCENT_RED, bg=BG_CARD)
+    bal_lbl.pack(anchor="w")
+
     win.bind("<Escape>", lambda e: win.destroy())
-    tree.bind("<Double-1>", open_case_detail())
+    win.bind("<F9>", lambda e: se.focus_set())
+    win.bind("<F5>", refresh)
 
 
-def due_report_window(parent):
-    show_table(parent, "Due Payments Report", DUE_PAYMENTS_REPORT, "Full due payment report")
+def due_payments_window(parent):
+    """Due Payments — Installment cases with unpaid balance (overdue instalments)."""
+    win = tk.Toplevel(parent)
+    win.title("Due Payments — Installment Cases — Sandhu Enterprises")
+    win.state("zoomed")
+    win.configure(bg=BG)
+    apply_dark_titlebar(win)
+    build_style()
+
+    tk.Frame(win, bg=ACCENT2, width=4).pack(side=tk.LEFT, fill=tk.Y)
+    right = tk.Frame(win, bg=BG)
+    right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+    topbar = tk.Frame(right, bg=BG_PANEL, pady=14, padx=20)
+    topbar.pack(fill=tk.X)
+    tk.Label(topbar, text="DUE PAYMENTS — INSTALLMENT CASES",
+             font=(FONT_UI, 16, "bold"), fg=TEXT, bg=BG_PANEL).pack(side=tk.LEFT)
+    tk.Label(topbar, text="  Instalments with outstanding dues",
+             font=(FONT_UI, 9), fg=TEXT_DIM, bg=BG_PANEL).pack(side=tk.LEFT)
+    tk.Button(topbar, text="✕  Close", command=win.destroy, font=(FONT_UI, 9),
+              fg=TEXT_DIM, bg=BG_PANEL, activeforeground=ACCENT_RED,
+              activebackground=BG_PANEL, relief="flat", bd=0,
+              cursor="hand2", padx=12).pack(side=tk.RIGHT)
+
+    make_shortcut_bar(right, [("ESC", "CLOSE", ACCENT_RED), ("F9", "SEARCH", "#36bfd9"),
+                               ("F5", "REFRESH", ACCENT2)])
+    tk.Frame(right, bg=BORDER, height=1).pack(fill=tk.X)
+
+    sf = tk.Frame(right, bg=BG, padx=16, pady=8)
+    sf.pack(fill=tk.X)
+    tk.Label(sf, text="🔍", font=(FONT_UI, 11), fg=TEXT_DIM, bg=BG).pack(side=tk.LEFT)
+    sv = tk.StringVar()
+    se = tk.Entry(sf, textvariable=sv, font=(FONT_UI, 10), fg=TEXT_DIM,
+                  bg=BG_CARD, insertbackground=ACCENT, relief="flat",
+                  highlightthickness=1, highlightcolor=ACCENT,
+                  highlightbackground=BORDER, width=38)
+    se.pack(side=tk.LEFT, ipady=7, padx=(8, 12))
+    PH = "Search by file no, customer, village…"
+    se.insert(0, PH)
+    se.bind("<FocusIn>",  lambda e: (se.delete(0, tk.END), se.config(fg=TEXT)) if se.get() == PH else None)
+    se.bind("<FocusOut>", lambda e: (se.insert(0, PH), se.config(fg=TEXT_DIM)) if not se.get() else None)
+
+    rec_badge = tk.Label(sf, text="  0 records  ", font=(FONT_UI, 9, "bold"),
+                         fg=ACCENT2, bg="#1b2e4a", padx=6, pady=4)
+    rec_badge.pack(side=tk.LEFT)
+
+    COLS   = ['file_no', 'date', 'customer', 'village', 'mobile_no', 'instalment_amt', 'missed_instalments', 'total_overdue', 'balance', 'id']
+    HEADS  = ['File No', 'Date', 'Customer', 'Village', 'Mobile No', 'Inst. Amt', 'Missed', 'Total Overdue', 'Total Balance', 'ID']
+    WIDTHS = [70, 90, 190, 120, 140, 100, 65, 110, 110, 50]
+
+    tf4 = tk.Frame(right, bg=BG, padx=20)
+    tf4.pack(fill=tk.BOTH, expand=True)
+    border2 = tk.Frame(tf4, bg=BORDER)
+    border2.pack(fill=tk.BOTH, expand=True, pady=8)
+    border2.grid_rowconfigure(0, weight=1)
+    border2.grid_columnconfigure(0, weight=1)
+
+    tree = ttk.Treeview(border2, columns=COLS, show="headings", style="T.Treeview")
+    for col, head, w in zip(COLS, HEADS, WIDTHS):
+        tree.heading(col, text=head)
+        tree.column(col, width=w, minwidth=40,
+                    anchor="center" if col in ('missed_instalments','total_overdue','instalment_amt','balance') else "w")
+    tree.tag_configure("even", background=BG_CARD)
+    tree.tag_configure("odd",  background=BG_ROW_ALT)
+    tree.grid(row=0, column=0, sticky="nsew")
+    attach_selection_bar(tree, tf4, color=ACCENT2)
+
+    all_rows = []
+
+    def load_data():
+        all_rows.clear()
+        for r in db.get_due_payments():
+            all_rows.append(tuple(str(r.get(c, '')) for c in COLS))
+
+    def populate(rows):
+        for item in tree.get_children(): tree.delete(item)
+        for i, vals in enumerate(rows):
+            tree.insert("", tk.END, values=vals,
+                        tags=("even" if i % 2 == 0 else "odd",))
+        rec_badge.config(text=f"  {len(rows)} records  ")
+
+    def do_search(*_):
+        q = sv.get().lower().strip()
+        if q == PH.lower(): q = ""
+        populate([r for r in all_rows if not q or any(q in str(v).lower() for v in r)])
+
+    sv.trace_add("write", do_search)
+
+    def refresh(e=None):
+        load_data()
+        do_search()
+        try:
+            tb = sum(float(r[7] or 0) for r in all_rows)
+            bal_lbl.config(text=f"₹ {tb:,.2f}")
+        except Exception:
+            pass
+
+    load_data()
+    populate(all_rows)
+
+    tk.Frame(right, bg=BORDER, height=1).pack(fill=tk.X)
+    sbar = tk.Frame(right, bg=BG_PANEL, pady=7, padx=16)
+    sbar.pack(fill=tk.X)
+    tk.Label(sbar, text="Due Payments  ·  Instalment cases with overdue / unpaid instalments",
+             font=(FONT_UI, 9), fg=TEXT_DIM, bg=BG_PANEL).pack(side=tk.LEFT)
+    bf = tk.Frame(sbar, bg=BG_CARD, padx=12, pady=4)
+    bf.pack(side=tk.RIGHT, padx=4)
+    tk.Label(bf, text="Total Overdue Amount", font=(FONT_UI, 7, "bold"), fg=TEXT_DIM, bg=BG_CARD).pack(anchor="w")
+    try:
+        tb_ = sum(float(r[7] or 0) for r in all_rows)
+    except Exception:
+        tb_ = 0
+    bal_lbl = tk.Label(bf, text=f"₹ {tb_:,.2f}", font=(FONT_MONO, 11, "bold"), fg=ACCENT2, bg=BG_CARD)
+    bal_lbl.pack(anchor="w")
+
+    win.bind("<Escape>", lambda e: win.destroy())
+    win.bind("<F9>", lambda e: se.focus_set())
+    win.bind("<F5>", refresh)
+
 
 def village_setup_window(parent):
-    show_table(parent, "Village Setup", VILLAGE_SETUP, "Configured village directory")
+    """Village directory with add/delete, backed by SQLite."""
+    win = tk.Toplevel(parent)
+    win.title("Village Setup — Sandhu Enterprises")
+    win.state("zoomed")
+    win.configure(bg=BG)
+    apply_dark_titlebar(win)
+    build_style()
+
+    tk.Frame(win, bg=ACCENT_PUR, width=4).pack(side=tk.LEFT, fill=tk.Y)
+    right = tk.Frame(win, bg=BG)
+    right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+    topbar = tk.Frame(right, bg=BG_PANEL, pady=14, padx=20)
+    topbar.pack(fill=tk.X)
+    tk.Label(topbar, text="VILLAGE SETUP",
+             font=(FONT_UI, 16, "bold"), fg=TEXT, bg=BG_PANEL).pack(side=tk.LEFT)
+    tk.Button(topbar, text="✕  Close", command=win.destroy, font=(FONT_UI, 9),
+              fg=TEXT_DIM, bg=BG_PANEL, activeforeground=ACCENT_RED,
+              activebackground=BG_PANEL, relief="flat", bd=0,
+              cursor="hand2", padx=12).pack(side=tk.RIGHT)
+    tk.Frame(right, bg=BORDER, height=1).pack(fill=tk.X)
+
+    add_bar = tk.Frame(right, bg=BG, padx=20, pady=10)
+    add_bar.pack(fill=tk.X)
+    tk.Label(add_bar, text="Village Name:", font=(FONT_UI, 10), fg=TEXT_DIM,
+             bg=BG).pack(side=tk.LEFT)
+    ne = make_entry(add_bar, width=28)
+    ne.pack(side=tk.LEFT, ipady=7, padx=(8, 12))
+
+    def add_village(e=None):
+        name = ne.get().strip()
+        if not name:
+            return
+        db.save_village(name)
+        ne.delete(0, tk.END)
+        refresh()
+
+    ne.bind("<Return>", add_village)
+    tk.Button(add_bar, text="＋ Add Village", font=(FONT_UI, 9, "bold"),
+              fg=BG, bg=ACCENT_PUR, relief="flat", bd=0, padx=14, pady=7,
+              cursor="hand2", command=add_village).pack(side=tk.LEFT)
+
+    tf4 = tk.Frame(right, bg=BG, padx=20)
+    tf4.pack(fill=tk.BOTH, expand=True)
+    border2 = tk.Frame(tf4, bg=BORDER)
+    border2.pack(fill=tk.BOTH, expand=True, pady=8)
+    border2.grid_rowconfigure(0, weight=1)
+    border2.grid_columnconfigure(0, weight=1)
+
+    tree = ttk.Treeview(border2, columns=('name',), show="headings", style="T.Treeview")
+    tree.heading('name', text='Village Name')
+    tree.column('name', width=400, anchor="w")
+    tree.tag_configure("even", background=BG_CARD)
+    tree.tag_configure("odd",  background=BG_ROW_ALT)
+    tree.grid(row=0, column=0, sticky="nsew")
+
+    def refresh():
+        for item in tree.get_children(): tree.delete(item)
+        for i, v in enumerate(db.get_villages()):
+            tree.insert("", tk.END, values=(v,),
+                        tags=("even" if i % 2 == 0 else "odd",))
+
+    refresh()
+
+    def delete_village(e=None):
+        sel = tree.selection()
+        if not sel: return
+        name = tree.item(sel[0], "values")[0]
+        if messagebox.askyesno("Delete", f"Delete village '{name}'?", parent=win):
+            db.delete_village(name)
+            refresh()
+
+    tk.Frame(right, bg=BORDER, height=1).pack(fill=tk.X)
+    sbar = tk.Frame(right, bg=BG_PANEL, pady=7, padx=16)
+    sbar.pack(fill=tk.X)
+    tk.Button(sbar, text="🗑  Delete Selected  Del", font=(FONT_UI, 9, "bold"),
+              fg=BG, bg=ACCENT_RED, relief="flat", bd=0, padx=12, pady=5,
+              cursor="hand2", command=delete_village).pack(side=tk.LEFT)
+
+    win.bind("<Escape>", lambda e: win.destroy())
+    win.bind("<Delete>", delete_village)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
