@@ -1643,60 +1643,7 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
         sale_total_lbl.config(text=f"{sale_total:.2f}")
         receipt_total_lbl.config(text=f"{receipt_total:.2f}")
     
-    def add_row(event=None):
-        i = len(sale_tree.get_children())
-        sale_tree.insert("", "end", values=("", "", "", ""),
-                        tags=("even" if i % 2 == 0 else "odd",))
 
-    win.bind("<Insert>", add_row)
-
-    def delete_row(event=None):
-        sel = sale_tree.selection()
-        if sel:
-            sale_tree.delete(sel[0])
-            update_totals()
-
-    win.bind("<Delete>", delete_row)
-
-    def on_double_click(event):
-        item = sale_tree.identify_row(event.y)
-        col  = sale_tree.identify_column(event.x)
-
-        if not item:
-            return
-
-        col_index = int(col.replace("#", "")) - 1
-
-        if _edit[0]:
-            _edit[0].destroy()
-
-        bbox = sale_tree.bbox(item, col)
-        if not bbox:
-            return
-
-        x, y, width, height = bbox
-        value = sale_tree.item(item, "values")[col_index]
-
-        entry = tk.Entry(sale_tree, font=(FONT_UI, 10),
-                        justify="center" if col_index != 0 else "left")
-        entry.place(x=x, y=y, width=width, height=height)
-        entry.insert(0, value)
-        entry.focus()
-
-        _edit[0] = entry
-
-        def save_edit(e=None):
-            values = list(sale_tree.item(item, "values"))
-            values[col_index] = entry.get()
-            sale_tree.item(item, values=values)
-            entry.destroy()
-            _edit[0] = None
-            update_totals()
-
-        entry.bind("<Return>", save_edit)
-        entry.bind("<FocusOut>", save_edit)
-
-    sale_tree.bind("<Double-1>", on_double_click)
 
 
 
@@ -2178,8 +2125,8 @@ def due_payments_window(parent):
               activebackground=BG_PANEL, relief="flat", bd=0,
               cursor="hand2", padx=12).pack(side=tk.RIGHT)
 
-    make_shortcut_bar(right, [("ESC", "CLOSE", ACCENT_RED), ("F9", "SEARCH", "#36bfd9"),
-                               ("F5", "REFRESH", ACCENT2)])
+    make_shortcut_bar(right, [("ESC", "CLOSE", ACCENT_RED), ("F2", "OPEN CASE", ACCENT),
+                               ("F9", "SEARCH", "#36bfd9"), ("F5", "REFRESH", ACCENT2)])
     tk.Frame(right, bg=BORDER, height=1).pack(fill=tk.X)
 
     sf = tk.Frame(right, bg=BG, padx=16, pady=8)
@@ -2269,9 +2216,25 @@ def due_payments_window(parent):
     bal_lbl = tk.Label(bf, text=f"₹ {tb_:,.2f}", font=(FONT_MONO, 11, "bold"), fg=ACCENT2, bg=BG_CARD)
     bal_lbl.pack(anchor="w")
 
+    def open_case(e=None):
+        sel = tree.selection()
+        if not sel:
+            messagebox.showinfo("Select", "Select a case first.", parent=win)
+            return
+        vals = tree.item(sel[0], "values")
+        case_id = str(vals[-1])
+        _reload_all()
+        for r in INSTALLMENT_CASES:
+            if str(r.get("id")) == case_id:
+                open_installment_case_detail(r, lambda: refresh())
+                return
+        messagebox.showinfo("Not Found", f"Case ID {case_id} not found.", parent=win)
+
     win.bind("<Escape>", lambda e: win.destroy())
     win.bind("<F9>", lambda e: se.focus_set())
     win.bind("<F5>", refresh)
+    win.bind("<F2>", open_case)
+    tree.bind("<Double-1>", lambda e: open_case())
 
 
 def village_setup_window(parent):

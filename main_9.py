@@ -790,6 +790,247 @@ def open_installment_case_detail(data, refresh_callback=None):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# INSTALLMENT CHART WINDOW  (top-level, callable from anywhere)
+# ═════════════════════════════════════════════════════════════════════════════
+def open_installment_chart_window(case_record, parent_win):
+    """Open the installment payment chart for a given case record dict."""
+    r = case_record
+    case_id_str  = str(r.get('id', ''))
+    customer     = r.get('customer', '')
+    mobile       = r.get('mobile_no', '')
+    balance_orig = r.get('balance', '0')
+    inst_amt     = r.get('instalment_amt', '0')
+    no_inst      = int(r.get('no_instalments') or r.get('no_inst') or 12)
+
+    top = tk.Toplevel(parent_win)
+    top.title("Installment Chart")
+    top.state("zoomed")
+    top.configure(bg=BG)
+    apply_dark_titlebar(top)
+
+    # ── Header ────────────────────────────────────────────────────────────
+    header = tk.Frame(top, bg=BG_PANEL, pady=10)
+    header.pack(fill="x")
+    tk.Frame(header, bg=ACCENT, width=4).pack(side="left", fill="y")
+    hi = tk.Frame(header, bg=BG_PANEL, padx=16)
+    hi.pack(side="left")
+    tk.Label(hi, text="INSTALLMENT CHART", font=(FONT_UI, 13, "bold"),
+             fg=TEXT, bg=BG_PANEL).pack(anchor="w")
+    tk.Label(hi, text=f"{customer}  ·  Mobile: {mobile}  ·  Case ID: {case_id_str}",
+             font=(FONT_UI, 9), fg=TEXT_DIM, bg=BG_PANEL).pack(anchor="w")
+
+    bal_badge_var = tk.StringVar(value=f"₹ {balance_orig}")
+    tk.Label(header, textvariable=bal_badge_var, font=(FONT_MONO, 12, "bold"),
+             fg=ACCENT_YEL, bg=BG_PANEL).pack(side="right", padx=20)
+    tk.Label(header, text="BALANCE:", font=(FONT_UI, 9), fg=TEXT_DIM,
+             bg=BG_PANEL).pack(side="right")
+
+    tk.Frame(top, bg=BORDER, height=1).pack(fill="x")
+
+    make_shortcut_bar(top, [
+        ("F10", "SAVE",       ACCENT2),
+        ("INS", "ADD ROW",    ACCENT_PUR),
+        ("DEL", "DELETE ROW", ACCENT_YEL),
+        ("ESC", "CLOSE",      ACCENT_RED),
+    ])
+    tk.Frame(top, bg=BORDER, height=1).pack(fill="x")
+
+    # ── Table ─────────────────────────────────────────────────────────────
+    columns  = ("no", "inst_date", "rec_date", "receipt_no", "amount", "balance")
+    headings = ["NO.", "INST. DATE", "RECVD. DATE", "RECEIPT NO.", "AMOUNT", "BALANCE"]
+    col_widths = [50, 120, 120, 120, 120, 120]
+
+    tbl_outer = tk.Frame(top, bg=BG, padx=20, pady=8)
+    tbl_outer.pack(fill="both", expand=True)
+
+    tbl_border = tk.Frame(tbl_outer, bg=BORDER, bd=1)
+    tbl_border.pack(fill="both", expand=True)
+    tbl_border.grid_rowconfigure(0, weight=1)
+    tbl_border.grid_columnconfigure(0, weight=1)
+
+    tree2 = ttk.Treeview(tbl_border, columns=columns, show="headings",
+                          style="T.Treeview")
+    tree2.grid(row=0, column=0, sticky="nsew")
+
+    vsb = tk.Scrollbar(tbl_border, orient="vertical", command=tree2.yview)
+    tree2.configure(yscrollcommand=vsb.set)
+    vsb.grid(row=0, column=1, sticky="ns")
+
+    for col, head, w in zip(columns, headings, col_widths):
+        tree2.heading(col, text=head)
+        tree2.column(col, anchor="center", width=w, minwidth=50, stretch=True)
+
+    tree2.tag_configure("even",    background=BG_CARD)
+    tree2.tag_configure("odd",     background=BG_ROW_ALT)
+    tree2.tag_configure("paid",    background="#f0fdf4", foreground="#15803d")
+    tree2.tag_configure("unpaid",  background="#fff7ed", foreground="#c2410c")
+
+    attach_selection_bar(tree2, tbl_outer, color=ACCENT2)
+
+    # ── Load saved payments or generate blank rows ─────────────────────────
+    saved = []
+    try:
+        saved = db.get_installment_payments(int(case_id_str))
+    except Exception:
+        pass
+
+    def _row_tag(i, recv):
+        if recv and str(recv).strip():
+            return "paid"
+        return "unpaid"
+
+    if saved:
+        for i, p in enumerate(saved):
+            recv = p.get('recv_date', '')
+            tree2.insert("", "end", values=(
+                p.get('inst_no', i + 1),
+                p.get('inst_date', ''),
+                recv,
+                p.get('receipt_no', ''),
+                p.get('amount', ''),
+                p.get('balance', balance_orig),
+            ), tags=(_row_tag(i, recv),))
+    else:
+        for i in range(1, no_inst + 1):
+            tree2.insert("", "end", values=(
+                i, f"30/{str(i).zfill(2)}/2024", "", "", inst_amt, balance_orig
+            ), tags=("unpaid",))
+
+    # ── Inline cell editor ────────────────────────────────────────────────
+    edit_entry = [None]
+
+    def on_cell_dbl(event):
+        item = tree2.identify_row(event.y)
+        col  = tree2.identify_column(event.x)
+        if not item:
+            return
+        ci = int(col.replace("#", "")) - 1
+        if ci == 0:          # lock NO column only; balance is now editable
+            return
+        if edit_entry[0]:
+            edit_entry[0].destroy(); edit_entry[0] = None
+        bbox = tree2.bbox(item, col)
+        if not bbox:
+            return
+        x, y, w, h = bbox
+        cur = tree2.item(item, "values")[ci]
+        ent = tk.Entry(tree2, font=(FONT_MONO, 10), fg=TEXT, bg=BG_INPUT,
+                       insertbackground=ACCENT, relief="flat",
+                       highlightthickness=1, highlightcolor=ACCENT,
+                       highlightbackground=ACCENT)
+        ent.place(x=x, y=y, width=w, height=h)
+        ent.insert(0, cur)
+        ent.select_range(0, tk.END)
+        ent.focus_set()
+        edit_entry[0] = ent
+
+        def commit(e=None):
+            vals = list(tree2.item(item, "values"))
+            vals[ci] = ent.get()
+            # update paid/unpaid colour based on recv_date col (index 2)
+            recv = vals[2] if ci != 2 else ent.get()
+            tree2.item(item, values=vals, tags=(_row_tag(0, recv),))
+            ent.destroy(); edit_entry[0] = None
+            _recalc_balance()
+
+        ent.bind("<Return>",   commit)
+        ent.bind("<Tab>",      commit)
+        ent.bind("<Escape>",   lambda e: (ent.destroy(), edit_entry.__setitem__(0, None)))
+        ent.bind("<FocusOut>", commit)
+
+    tree2.bind("<Double-1>", on_cell_dbl)
+
+    # ── Balance recalc ────────────────────────────────────────────────────
+    def _recalc_balance():
+        """Recompute running balance for each row and update badge."""
+        try:
+            fin_amt = float(str(r.get('amount_financed') or r.get('finance_amt') or 0))
+        except Exception:
+            fin_amt = 0.0
+        running = fin_amt
+        children = tree2.get_children()
+        for child in children:
+            vals = list(tree2.item(child, "values"))
+            try:
+                paid = float(str(vals[4]).replace(',', '') or 0)
+            except Exception:
+                paid = 0.0
+            if vals[2] and str(vals[2]).strip():   # has recv_date → paid
+                running -= paid
+            vals[5] = f"{running:.2f}"
+            recv = vals[2]
+            tree2.item(child, values=vals, tags=(_row_tag(0, recv),))
+        bal_badge_var.set(f"₹ {running:,.2f}")
+
+    # ── Add / Delete rows ─────────────────────────────────────────────────
+    def add_row(e=None):
+        n   = len(tree2.get_children())
+        no  = n + 1
+        tree2.insert("", "end", values=(no, "", "", "", inst_amt, balance_orig),
+                     tags=("unpaid",))
+
+    def del_row(e=None):
+        sel = tree2.selection()
+        if not sel:
+            return
+        if messagebox.askyesno("Delete Row", "Delete selected instalment row?", parent=top):
+            tree2.delete(sel[0])
+            # renumber
+            for idx, child in enumerate(tree2.get_children()):
+                vals = list(tree2.item(child, "values"))
+                vals[0] = idx + 1
+                tree2.item(child, values=vals)
+            _recalc_balance()
+
+    top.bind("<Insert>", add_row)
+    top.bind("<Delete>", del_row)
+
+    # ── Save ──────────────────────────────────────────────────────────────
+    def save_chart(e=None):
+        rows = []
+        for child in tree2.get_children():
+            v = tree2.item(child, "values")
+            rows.append({
+                'inst_no':    v[0],
+                'inst_date':  v[1],
+                'recv_date':  v[2],
+                'receipt_no': v[3],
+                'amount':     v[4],
+                'balance':    v[5],
+            })
+        try:
+            db.save_installment_payments(int(case_id_str), rows)
+            _reload_all()
+            messagebox.showinfo("Saved ✓", "Installment chart saved to database.", parent=top)
+        except Exception as ex:
+            messagebox.showerror("Error", str(ex), parent=top)
+
+    # ── Button bar ────────────────────────────────────────────────────────
+    tk.Frame(top, bg=BORDER, height=1).pack(fill="x")
+    btn_bar = tk.Frame(top, bg=BG_PANEL, pady=8, padx=16)
+    btn_bar.pack(fill="x")
+
+    tk.Button(btn_bar, text="＋  Add Row  INS", font=(FONT_UI, 9, "bold"),
+              fg=BG, bg=ACCENT_PUR, relief="flat", bd=0, padx=14, pady=6,
+              cursor="hand2", command=add_row).pack(side=tk.LEFT, padx=(0, 8))
+    tk.Button(btn_bar, text="−  Delete Row  DEL", font=(FONT_UI, 9, "bold"),
+              fg=BG, bg=ACCENT_YEL, relief="flat", bd=0, padx=14, pady=6,
+              cursor="hand2", command=del_row).pack(side=tk.LEFT, padx=(0, 8))
+    tk.Button(btn_bar, text="🔄  Recalc Balance", font=(FONT_UI, 9, "bold"),
+              fg=BG, bg=ACCENT, relief="flat", bd=0, padx=14, pady=6,
+              cursor="hand2", command=_recalc_balance).pack(side=tk.LEFT, padx=(0, 8))
+    tk.Button(btn_bar, text="💾  SAVE  F10", font=(FONT_UI, 9, "bold"),
+              fg=BG, bg=ACCENT2, relief="flat", bd=0, padx=14, pady=6,
+              cursor="hand2", command=save_chart).pack(side=tk.LEFT, padx=(0, 8))
+    tk.Button(btn_bar, text="✕  CLOSE  ESC", font=(FONT_UI, 9, "bold"),
+              fg=ACCENT_RED, bg=BG_PANEL, relief="flat", bd=0, padx=14, pady=6,
+              cursor="hand2", command=top.destroy).pack(side=tk.LEFT)
+
+    top.bind("<F10>",    save_chart)
+    top.bind("<Escape>", lambda e: top.destroy())
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # INSTALLMENT CASES WINDOW
 # ═════════════════════════════════════════════════════════════════════════════
 INST_COLS   = ['file_no', 'date', 'customer', 'village', 'mobile_no', 'finance_amt', 'balance', 'id']
@@ -953,180 +1194,12 @@ def installment_window(parent):
         if not sel:
             messagebox.showinfo("Select", "Select a case first", parent=win)
             return
-
         vals = tree.item(sel[0], "values")
-
-        top = tk.Toplevel(win)
-        top.title("Installment Chart")
-        top.geometry("1100x640")
-        top.configure(bg=BG)
-        apply_dark_titlebar(top)
-
-        # HEADER
-        header = tk.Frame(top, bg=BG_PANEL, pady=10)
-        header.pack(fill="x")
-        tk.Frame(header, bg=ACCENT, width=4).pack(side="left", fill="y")
-        hi = tk.Frame(header, bg=BG_PANEL, padx=16)
-        hi.pack(side="left")
-        tk.Label(hi, text="INSTALLMENT CHART", font=(FONT_UI, 13, "bold"),
-                 fg=TEXT, bg=BG_PANEL).pack(anchor="w")
-        tk.Label(hi, text=f"{vals[2]}  ·  Mobile: {vals[4]}  ·  Case: {vals[-1]}",
-                 font=(FONT_UI, 9), fg=TEXT_DIM, bg=BG_PANEL).pack(anchor="w")
-        tk.Label(header, text=f"Due: {vals[6]}", font=(FONT_UI, 11, "bold"),
-                 fg=ACCENT_YEL, bg=BG_PANEL).pack(side="right", padx=20)
-        tk.Frame(top, bg=BORDER, height=1).pack(fill="x")
-
-        # TABLE
-        columns = ("no", "inst_date", "rec_date", "receipt", "amount", "balance")
-
-        tbl_wrap = tk.Frame(top, bg=BG, padx=20, pady=10)
-        tbl_wrap.pack(fill="both", expand=True)
-
-        tree2 = ttk.Treeview(tbl_wrap, columns=columns, show="headings",
-                              style="T.Treeview", height=20)
-        tree2.pack(fill="both", expand=True)
-
-        headings = ["NO.", "INST.DATE", "RECVD.DATE", "RECEIPT NO.", "AMOUNT", "BALANCE"]
-
-        for col, head in zip(columns, headings):
-            tree2.heading(col, text=head)
-            tree2.column(col, anchor="center", width=150)
-
-        tree2.tag_configure("even", background=BG_CARD)
-        tree2.tag_configure("odd",  background=BG_ROW_ALT)
-
-        balance_fixed = vals[6]
-        case_id_chart = str(vals[-1])
-
-        # Load saved payments from DB if they exist
-        saved_payments = []
-        try:
-            case_id_int = int(case_id_chart)
-            saved_payments = db.get_installment_payments(case_id_int)
-        except Exception:
-            pass
-
-        no_inst = 12
-        try:
-            for r in INSTALLMENT_CASES:
-                if str(r.get('id')) == case_id_chart:
-                    no_inst = int(r.get('no_instalments') or r.get('no_inst') or 12)
-                    break
-        except Exception:
-            no_inst = 12
-
-        if saved_payments:
-            for i, p in enumerate(saved_payments):
-                tree2.insert("", "end", values=(
-                    p.get('inst_no', i+1),
-                    p.get('inst_date', ''),
-                    p.get('recv_date', ''),
-                    p.get('receipt_no', ''),
-                    p.get('amount', ''),
-                    p.get('balance', balance_fixed),
-                ), tags=("even" if i % 2 == 0 else "odd",))
-        else:
-            for i in range(1, no_inst + 1):
-                tree2.insert("", "end", values=(
-                    i,
-                    f"30/{str(i).zfill(2)}/2024",
-                    "",
-                    "",
-                    "",
-                    balance_fixed
-                ), tags=("even" if i % 2 == 0 else "odd",))
-
-        attach_selection_bar(tree2, tbl_wrap, color=ACCENT2)
-
-        # EDITABLE CELLS
-        edit_entry = [None]
-
-        def on_double_click(event):
-            item = tree2.identify_row(event.y)
-            col  = tree2.identify_column(event.x)
-
-            if not item:
+        case_id = str(vals[-1])
+        for r in INSTALLMENT_CASES:
+            if str(r.get("id")) == case_id:
+                open_installment_chart_window(r, win)
                 return
-
-            col_index = int(col.replace("#", "")) - 1
-
-            if col_index in [0, 5]:   # lock NO + BALANCE
-                return
-
-            # Destroy any existing editor
-            if edit_entry[0]:
-                edit_entry[0].destroy()
-                edit_entry[0] = None
-
-            bbox = tree2.bbox(item, col)
-            if not bbox:
-                return
-            x, y, width, height = bbox
-
-            current_val = tree2.item(item, "values")[col_index]
-
-            entry = tk.Entry(tree2, font=(FONT_MONO, 10),
-                             fg=TEXT, bg=BG_INPUT,
-                             insertbackground=ACCENT, relief="flat",
-                             highlightthickness=1, highlightcolor=ACCENT,
-                             highlightbackground=ACCENT)
-            entry.place(x=x, y=y, width=width, height=height)
-            entry.insert(0, current_val)
-            entry.select_range(0, tk.END)
-            entry.focus_set()
-            edit_entry[0] = entry
-
-            def commit(e=None):
-                values = list(tree2.item(item, "values"))
-                values[col_index] = entry.get()
-                tree2.item(item, values=values)
-                entry.destroy()
-                edit_entry[0] = None
-
-            def cancel(e=None):
-                entry.destroy()
-                edit_entry[0] = None
-
-            entry.bind("<Return>",  commit)
-            entry.bind("<Tab>",     commit)
-            entry.bind("<Escape>",  cancel)
-            entry.bind("<FocusOut>", commit)
-
-        tree2.bind("<Double-1>", on_double_click)
-
-        def save_chart(e=None):
-            rows = []
-            case_id = data.get('id') if isinstance(data, dict) else None
-            # Collect from tree. vals order: (no, inst_date, recv_date, receipt_no, amount, balance)
-            for child in tree2.get_children():
-                v = tree2.item(child, "values")
-                rows.append({
-                    'inst_no':   v[0],
-                    'inst_date': v[1],
-                    'recv_date': v[2],
-                    'receipt_no': v[3],
-                    'amount':    v[4],
-                    'balance':   v[5],
-                })
-            if case_id:
-                db.save_installment_payments(case_id, rows)
-                _reload_all()
-                messagebox.showinfo("Saved", "Installment chart saved to database.", parent=top)
-            else:
-                messagebox.showinfo("Saved", "Installment chart saved.", parent=top)
-
-        btn_bar = tk.Frame(top, bg=BG_PANEL)
-        btn_bar.pack(fill="x", padx=10, pady=6)
-        tk.Button(btn_bar, text="💾  SAVE  F10", font=(FONT_UI, 9, "bold"),
-                  fg=BG, bg=ACCENT2, relief="flat", bd=0, padx=14, pady=6,
-                  cursor="hand2",
-                  command=save_chart
-                  ).pack(side=tk.LEFT, padx=(0, 8))
-        tk.Button(btn_bar, text="✕  CLOSE", font=(FONT_UI, 9, "bold"),
-                  fg=ACCENT_RED, bg=BG_PANEL, relief="flat", bd=0, padx=14, pady=6,
-                  cursor="hand2", command=top.destroy).pack(side=tk.LEFT)
-        top.bind("<F10>", save_chart)
-        top.bind("<Escape>", lambda e: top.destroy())
 
     def delete_case():
         sel = tree.selection()
@@ -1144,9 +1217,21 @@ def installment_window(parent):
         if q == PH.lower(): q = ""
         populate([r for r in all_data if not q or any(q in str(v).lower() for v in r)])
 
+    def open_chart_from_tree(e=None):
+        sel = tree.selection()
+        if not sel:
+            messagebox.showinfo("Select", "Select a case first.", parent=win); return
+        vals = tree.item(sel[0], "values")
+        case_id = str(vals[-1])
+        for r in INSTALLMENT_CASES:
+            if str(r.get("id")) == case_id:
+                open_installment_chart_window(r, win)
+                return
+        messagebox.showinfo("Not Found", "Case not found.", parent=win)
+
     sv.trace_add("write", do_search)
     win.bind("<F1>",     lambda e: new_case())
-    win.bind("<F2>",     lambda e: open_installment_chart(tree,win))
+    win.bind("<F2>",     open_chart_from_tree)
     win.bind("<F3>",     lambda e: open_detail())
     win.bind("<F8>",     lambda e: delete_case())
     win.bind("<F9>",     lambda e: se.focus_set())
@@ -1558,20 +1643,24 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
     ph_canvas.after(150, draw_x)
 
     # ── PAYMENT TABLE ─────────────────────────────────────────────────────
-    # ── Payment table (fills remaining right-column height) ───────────────
     tbl_card = tk.Frame(right_col, bg=BG_CARD,
                         highlightbackground=BORDER, highlightthickness=1,
                         padx=16, pady=12)
     tbl_card.grid(row=1, column=0, sticky="nsew")
-    tbl_card.grid_rowconfigure(1, weight=1)
-    tbl_card.grid_columnconfigure(0, weight=1)
+    # section_header uses pack — keep it in tbl_card via pack
     section_header(tbl_card, "SALE / RECEIPT ENTRIES", ACCENT2)
+
+    # All grid children go inside tbl_inner (avoids pack/grid conflict)
+    tbl_inner = tk.Frame(tbl_card, bg=BG_CARD)
+    tbl_inner.pack(fill=tk.BOTH, expand=True)
+    tbl_inner.grid_rowconfigure(0, weight=1)
+    tbl_inner.grid_columnconfigure(0, weight=1)
 
     tbl_cols   = ("description", "date", "sale_amt", "receipt")
     tbl_heads  = ("SALE / RECEIPT DESCRIPTION", "DATE", "SALE AMOUNT", "RECEIPT")
 
-    tbl_wrap = tk.Frame(tbl_card, bg=BORDER, bd=1)
-    tbl_wrap.grid(row=1, column=0, sticky="nsew")
+    tbl_wrap = tk.Frame(tbl_inner, bg=BORDER, bd=1)
+    tbl_wrap.grid(row=0, column=0, sticky="nsew")
     tbl_wrap.grid_rowconfigure(0, weight=1)
     tbl_wrap.grid_columnconfigure(0, weight=1)
 
@@ -1598,13 +1687,13 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
     vsb2.grid(row=0, column=1, sticky="ns")
     sale_tree.grid(row=0, column=0, sticky="nsew")
 
-    # Totals footer — right-aligned to match columns
-    footer = tk.Frame(tbl_card, bg=BG_CARD)
-    footer.grid(row=2, column=0, sticky="ew", pady=(4, 0))
-    footer.grid_columnconfigure(0, weight=5)   # description spacer
-    footer.grid_columnconfigure(1, weight=2)   # date spacer
-    footer.grid_columnconfigure(2, weight=2)   # sale total
-    footer.grid_columnconfigure(3, weight=2)   # receipt total
+    # Totals footer
+    footer = tk.Frame(tbl_inner, bg=BG_CARD)
+    footer.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+    footer.grid_columnconfigure(0, weight=5)
+    footer.grid_columnconfigure(1, weight=2)
+    footer.grid_columnconfigure(2, weight=2)
+    footer.grid_columnconfigure(3, weight=2)
 
     tk.Label(footer, text="TOTAL", font=(FONT_UI, 9, "bold"),
              fg=TEXT_DIM, bg=BG_CARD, anchor="e").grid(row=0, column=1, sticky="e", padx=4)
@@ -1766,8 +1855,8 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
             sale_tree.delete(sel[0])
             recalc_totals()
 
-    btn_row = tk.Frame(tbl_card, bg=BG_CARD)
-    btn_row.pack(fill=tk.X, pady=(6, 0))
+    btn_row = tk.Frame(tbl_inner, bg=BG_CARD)
+    btn_row.grid(row=2, column=0, sticky="ew", pady=(4, 0))
     tk.Button(btn_row, text="＋  Add Row  INS", font=(FONT_UI, 9, "bold"),
               fg=BG, bg=ACCENT_PUR, relief="flat", bd=0, padx=12, pady=5,
               cursor="hand2", command=add_row).pack(side=tk.LEFT, padx=(0, 8))
@@ -2057,8 +2146,12 @@ def due_report_window(parent):
               activebackground=BG_PANEL, relief="flat", bd=0,
               cursor="hand2", padx=12).pack(side=tk.RIGHT)
 
-    make_shortcut_bar(right, [("ESC", "CLOSE", ACCENT_RED), ("F9", "SEARCH", "#36bfd9"),
-                               ("F5", "REFRESH", ACCENT_YEL)])
+    make_shortcut_bar(right, [
+        ("ESC", "CLOSE",       ACCENT_RED),
+        ("F2",  "OPEN CASE",   ACCENT),
+        ("F9",  "SEARCH",      "#36bfd9"),
+        ("F5",  "REFRESH",     ACCENT_YEL),
+    ])
     tk.Frame(right, bg=BORDER, height=1).pack(fill=tk.X)
 
     sf = tk.Frame(right, bg=BG, padx=16, pady=8)
@@ -2149,9 +2242,27 @@ def due_report_window(parent):
     bal_lbl = tk.Label(bf, text=f"₹ {tb_:,.2f}", font=(FONT_MONO, 11, "bold"), fg=ACCENT_RED, bg=BG_CARD)
     bal_lbl.pack(anchor="w")
 
+    # ── Open credit case detail ────────────────────────────────────────────
+    def open_case(e=None):
+        sel = tree.selection()
+        if not sel:
+            messagebox.showinfo("Select", "Select a case first.", parent=win)
+            return
+        vals    = tree.item(sel[0], "values")
+        case_id = str(vals[-1])          # last col is id
+        _reload_all()
+        for cr in CREDIT_CASES:
+            if str(cr.get("id")) == case_id:
+                new_credit_case_form(win, data=cr,
+                                     on_save_callback=lambda _: win.after(100, refresh))
+                return
+        messagebox.showinfo("Not Found", f"Case ID {case_id} not found.", parent=win)
+
     win.bind("<Escape>", lambda e: win.destroy())
-    win.bind("<F9>", lambda e: se.focus_set())
+    win.bind("<F2>", open_case)
     win.bind("<F5>", refresh)
+    win.bind("<F9>", lambda e: se.focus_set())
+    tree.bind("<Double-1>", lambda e: open_case())
 
 
 def due_payments_window(parent):
@@ -2178,8 +2289,13 @@ def due_payments_window(parent):
               activebackground=BG_PANEL, relief="flat", bd=0,
               cursor="hand2", padx=12).pack(side=tk.RIGHT)
 
-    make_shortcut_bar(right, [("ESC", "CLOSE", ACCENT_RED), ("F9", "SEARCH", "#36bfd9"),
-                               ("F5", "REFRESH", ACCENT2)])
+    make_shortcut_bar(right, [
+        ("ESC", "CLOSE",       ACCENT_RED),
+        ("F2",  "OPEN CASE",   ACCENT),
+        ("F3",  "INST. CHART", ACCENT_PUR),
+        ("F9",  "SEARCH",      "#36bfd9"),
+        ("F5",  "REFRESH",     ACCENT2),
+    ])
     tk.Frame(right, bg=BORDER, height=1).pack(fill=tk.X)
 
     sf = tk.Frame(right, bg=BG, padx=16, pady=8)
@@ -2269,9 +2385,37 @@ def due_payments_window(parent):
     bal_lbl = tk.Label(bf, text=f"₹ {tb_:,.2f}", font=(FONT_MONO, 11, "bold"), fg=ACCENT2, bg=BG_CARD)
     bal_lbl.pack(anchor="w")
 
+    # ── Open Case Detail (F2 / double-click) ──────────────────────────────
+    def _get_case_record():
+        sel = tree.selection()
+        if not sel:
+            messagebox.showinfo("Select", "Select a case first.", parent=win)
+            return None
+        vals  = tree.item(sel[0], "values")
+        case_id = str(vals[-1])
+        _reload_all()
+        for r in INSTALLMENT_CASES:
+            if str(r.get("id")) == case_id:
+                return r
+        messagebox.showinfo("Not Found", f"Case ID {case_id} not found.", parent=win)
+        return None
+
+    def open_case(e=None):
+        r = _get_case_record()
+        if r:
+            open_installment_case_detail(r, lambda: refresh())
+
+    def open_chart(e=None):
+        r = _get_case_record()
+        if r:
+            open_installment_chart_window(r, win)
+
     win.bind("<Escape>", lambda e: win.destroy())
-    win.bind("<F9>", lambda e: se.focus_set())
+    win.bind("<F2>", open_case)
+    win.bind("<F3>", open_chart)
     win.bind("<F5>", refresh)
+    win.bind("<F9>", lambda e: se.focus_set())
+    tree.bind("<Double-1>", lambda e: open_case())
 
 
 def village_setup_window(parent):
