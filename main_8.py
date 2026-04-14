@@ -45,6 +45,15 @@ FONT_MONO   = "Consolas"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+def fmt_customer(name, relation=""):
+    """Return 'Name (Father)' if relation provided, else just 'Name'."""
+    name = str(name or "").strip()
+    relation = str(relation or "").strip()
+    if relation:
+        return f"{name} ({relation})"
+    return name
+
+
 def apply_dark_titlebar(win):
     try:
         import ctypes
@@ -795,15 +804,16 @@ def open_installment_case_detail(data, refresh_callback=None):
 def open_installment_chart_window(case_record, parent_win):
     """Open the installment payment chart for a given case record dict."""
     r = case_record
-    case_id_str = str(r.get('id', ''))
-    customer    = r.get('customer', '')
-    mobile      = r.get('mobile_no', '')
-    balance     = r.get('balance', '0')
-    no_inst     = int(r.get('no_instalments') or r.get('no_inst') or 12)
+    case_id_str  = str(r.get('id', ''))
+    customer     = r.get('customer', '')
+    mobile       = r.get('mobile_no', '')
+    balance_orig = r.get('balance', '0')
+    inst_amt     = r.get('instalment_amt', '0')
+    no_inst      = int(r.get('no_instalments') or r.get('no_inst') or 12)
 
     top = tk.Toplevel(parent_win)
     top.title("Installment Chart")
-    top.geometry("1100x640")
+    top.state("zoomed")
     top.configure(bg=BG)
     apply_dark_titlebar(top)
 
@@ -815,54 +825,92 @@ def open_installment_chart_window(case_record, parent_win):
     hi.pack(side="left")
     tk.Label(hi, text="INSTALLMENT CHART", font=(FONT_UI, 13, "bold"),
              fg=TEXT, bg=BG_PANEL).pack(anchor="w")
-    tk.Label(hi, text=f"{customer}  ·  Mobile: {mobile}  ·  Case: {case_id_str}",
+    tk.Label(hi, text=f"{customer}  ·  Mobile: {mobile}  ·  Case ID: {case_id_str}",
              font=(FONT_UI, 9), fg=TEXT_DIM, bg=BG_PANEL).pack(anchor="w")
-    tk.Label(header, text=f"Balance: ₹{balance}", font=(FONT_UI, 11, "bold"),
+
+    bal_badge_var = tk.StringVar(value=f"₹ {balance_orig}")
+    tk.Label(header, textvariable=bal_badge_var, font=(FONT_MONO, 12, "bold"),
              fg=ACCENT_YEL, bg=BG_PANEL).pack(side="right", padx=20)
+    tk.Label(header, text="BALANCE:", font=(FONT_UI, 9), fg=TEXT_DIM,
+             bg=BG_PANEL).pack(side="right")
+
+    # Show "Amount to be Paid per Instalment" once in header
+    tk.Frame(header, bg=BORDER, width=1).pack(side="right", fill="y", padx=4)
+    tk.Label(header, text=f"₹ {inst_amt}", font=(FONT_MONO, 12, "bold"),
+             fg=ACCENT2, bg=BG_PANEL).pack(side="right", padx=4)
+    tk.Label(header, text="AMT TO BE PAID:", font=(FONT_UI, 9), fg=TEXT_DIM,
+             bg=BG_PANEL).pack(side="right")
+
+    tk.Frame(top, bg=BORDER, height=1).pack(fill="x")
+
+    make_shortcut_bar(top, [
+        ("F10", "SAVE",       ACCENT2),
+        ("INS", "ADD ROW",    ACCENT_PUR),
+        ("DEL", "DELETE ROW", ACCENT_YEL),
+        ("ESC", "CLOSE",      ACCENT_RED),
+    ])
     tk.Frame(top, bg=BORDER, height=1).pack(fill="x")
 
     # ── Table ─────────────────────────────────────────────────────────────
-    columns  = ("no", "inst_date", "rec_date", "receipt", "amount", "balance")
-    headings = ["NO.", "INST.DATE", "RECVD.DATE", "RECEIPT NO.", "AMOUNT", "BALANCE"]
+    columns  = ("no", "inst_date", "rec_date", "receipt_no", "amount", "balance")
+    headings = ["NO.", "INST. DATE", "RECVD. DATE", "RECEIPT NO.", "AMOUNT PAID", "BALANCE"]
+    col_widths = [50, 120, 120, 120, 120, 120]
 
-    tbl_wrap = tk.Frame(top, bg=BG, padx=20, pady=10)
-    tbl_wrap.pack(fill="both", expand=True)
+    tbl_outer = tk.Frame(top, bg=BG, padx=20, pady=8)
+    tbl_outer.pack(fill="both", expand=True)
 
-    tree2 = ttk.Treeview(tbl_wrap, columns=columns, show="headings",
-                          style="T.Treeview", height=20)
-    tree2.pack(fill="both", expand=True)
+    tbl_border = tk.Frame(tbl_outer, bg=BORDER, bd=1)
+    tbl_border.pack(fill="both", expand=True)
+    tbl_border.grid_rowconfigure(0, weight=1)
+    tbl_border.grid_columnconfigure(0, weight=1)
 
-    for col, head in zip(columns, headings):
+    tree2 = ttk.Treeview(tbl_border, columns=columns, show="headings",
+                          style="T.Treeview")
+    tree2.grid(row=0, column=0, sticky="nsew")
+
+    vsb = tk.Scrollbar(tbl_border, orient="vertical", command=tree2.yview)
+    tree2.configure(yscrollcommand=vsb.set)
+    vsb.grid(row=0, column=1, sticky="ns")
+
+    for col, head, w in zip(columns, headings, col_widths):
         tree2.heading(col, text=head)
-        tree2.column(col, anchor="center", width=150)
+        tree2.column(col, anchor="center", width=w, minwidth=50, stretch=True)
 
-    tree2.tag_configure("even", background=BG_CARD)
-    tree2.tag_configure("odd",  background=BG_ROW_ALT)
+    tree2.tag_configure("even",    background=BG_CARD)
+    tree2.tag_configure("odd",     background=BG_ROW_ALT)
+    tree2.tag_configure("paid",    background="#f0fdf4", foreground="#15803d")
+    tree2.tag_configure("unpaid",  background="#fff7ed", foreground="#c2410c")
 
-    # Load saved payments from DB, or create blank rows
+    attach_selection_bar(tree2, tbl_outer, color=ACCENT2)
+
+    # ── Load saved payments or generate blank rows ─────────────────────────
     saved = []
     try:
         saved = db.get_installment_payments(int(case_id_str))
     except Exception:
         pass
 
+    def _row_tag(i, recv):
+        if recv and str(recv).strip():
+            return "paid"
+        return "unpaid"
+
     if saved:
         for i, p in enumerate(saved):
+            recv = p.get('recv_date', '')
             tree2.insert("", "end", values=(
                 p.get('inst_no', i + 1),
                 p.get('inst_date', ''),
-                p.get('recv_date', ''),
+                recv,
                 p.get('receipt_no', ''),
                 p.get('amount', ''),
-                p.get('balance', balance),
-            ), tags=("even" if i % 2 == 0 else "odd",))
+                p.get('balance', balance_orig),
+            ), tags=(_row_tag(i, recv),))
     else:
         for i in range(1, no_inst + 1):
             tree2.insert("", "end", values=(
-                i, f"30/{str(i).zfill(2)}/2024", "", "", "", balance
-            ), tags=("even" if i % 2 == 0 else "odd",))
-
-    attach_selection_bar(tree2, tbl_wrap, color=ACCENT2)
+                i, f"30/{str(i).zfill(2)}/2024", "", "", "", balance_orig
+            ), tags=("unpaid",))
 
     # ── Inline cell editor ────────────────────────────────────────────────
     edit_entry = [None]
@@ -873,7 +921,7 @@ def open_installment_chart_window(case_record, parent_win):
         if not item:
             return
         ci = int(col.replace("#", "")) - 1
-        if ci in (0, 5):          # lock NO and BALANCE columns
+        if ci == 0:          # lock NO column only; balance is now editable
             return
         if edit_entry[0]:
             edit_entry[0].destroy(); edit_entry[0] = None
@@ -895,8 +943,11 @@ def open_installment_chart_window(case_record, parent_win):
         def commit(e=None):
             vals = list(tree2.item(item, "values"))
             vals[ci] = ent.get()
-            tree2.item(item, values=vals)
+            # update paid/unpaid colour based on recv_date col (index 2)
+            recv = vals[2] if ci != 2 else ent.get()
+            tree2.item(item, values=vals, tags=(_row_tag(0, recv),))
             ent.destroy(); edit_entry[0] = None
+            _recalc_balance()
 
         ent.bind("<Return>",   commit)
         ent.bind("<Tab>",      commit)
@@ -904,6 +955,51 @@ def open_installment_chart_window(case_record, parent_win):
         ent.bind("<FocusOut>", commit)
 
     tree2.bind("<Double-1>", on_cell_dbl)
+
+    # ── Balance recalc ────────────────────────────────────────────────────
+    def _recalc_balance():
+        """Recompute running balance for each row and update badge."""
+        try:
+            fin_amt = float(str(r.get('amount_financed') or r.get('finance_amt') or 0))
+        except Exception:
+            fin_amt = 0.0
+        running = fin_amt
+        children = tree2.get_children()
+        for child in children:
+            vals = list(tree2.item(child, "values"))
+            try:
+                paid = float(str(vals[4]).replace(',', '') or 0)
+            except Exception:
+                paid = 0.0
+            if vals[2] and str(vals[2]).strip():   # has recv_date → paid
+                running -= paid
+            vals[5] = f"{running:.2f}"
+            recv = vals[2]
+            tree2.item(child, values=vals, tags=(_row_tag(0, recv),))
+        bal_badge_var.set(f"₹ {running:,.2f}")
+
+    # ── Add / Delete rows ─────────────────────────────────────────────────
+    def add_row(e=None):
+        n   = len(tree2.get_children())
+        no  = n + 1
+        tree2.insert("", "end", values=(no, "", "", "", "", balance_orig),
+                     tags=("unpaid",))
+
+    def del_row(e=None):
+        sel = tree2.selection()
+        if not sel:
+            return
+        if messagebox.askyesno("Delete Row", "Delete selected instalment row?", parent=top):
+            tree2.delete(sel[0])
+            # renumber
+            for idx, child in enumerate(tree2.get_children()):
+                vals = list(tree2.item(child, "values"))
+                vals[0] = idx + 1
+                tree2.item(child, values=vals)
+            _recalc_balance()
+
+    top.bind("<Insert>", add_row)
+    top.bind("<Delete>", del_row)
 
     # ── Save ──────────────────────────────────────────────────────────────
     def save_chart(e=None):
@@ -925,14 +1021,27 @@ def open_installment_chart_window(case_record, parent_win):
         except Exception as ex:
             messagebox.showerror("Error", str(ex), parent=top)
 
-    btn_bar = tk.Frame(top, bg=BG_PANEL)
-    btn_bar.pack(fill="x", padx=10, pady=6)
+    # ── Button bar ────────────────────────────────────────────────────────
+    tk.Frame(top, bg=BORDER, height=1).pack(fill="x")
+    btn_bar = tk.Frame(top, bg=BG_PANEL, pady=8, padx=16)
+    btn_bar.pack(fill="x")
+
+    tk.Button(btn_bar, text="＋  Add Row  INS", font=(FONT_UI, 9, "bold"),
+              fg=BG, bg=ACCENT_PUR, relief="flat", bd=0, padx=14, pady=6,
+              cursor="hand2", command=add_row).pack(side=tk.LEFT, padx=(0, 8))
+    tk.Button(btn_bar, text="−  Delete Row  DEL", font=(FONT_UI, 9, "bold"),
+              fg=BG, bg=ACCENT_YEL, relief="flat", bd=0, padx=14, pady=6,
+              cursor="hand2", command=del_row).pack(side=tk.LEFT, padx=(0, 8))
+    tk.Button(btn_bar, text="🔄  Recalc Balance", font=(FONT_UI, 9, "bold"),
+              fg=BG, bg=ACCENT, relief="flat", bd=0, padx=14, pady=6,
+              cursor="hand2", command=_recalc_balance).pack(side=tk.LEFT, padx=(0, 8))
     tk.Button(btn_bar, text="💾  SAVE  F10", font=(FONT_UI, 9, "bold"),
               fg=BG, bg=ACCENT2, relief="flat", bd=0, padx=14, pady=6,
               cursor="hand2", command=save_chart).pack(side=tk.LEFT, padx=(0, 8))
-    tk.Button(btn_bar, text="✕  CLOSE", font=(FONT_UI, 9, "bold"),
+    tk.Button(btn_bar, text="✕  CLOSE  ESC", font=(FONT_UI, 9, "bold"),
               fg=ACCENT_RED, bg=BG_PANEL, relief="flat", bd=0, padx=14, pady=6,
               cursor="hand2", command=top.destroy).pack(side=tk.LEFT)
+
     top.bind("<F10>",    save_chart)
     top.bind("<Escape>", lambda e: top.destroy())
 
@@ -940,9 +1049,9 @@ def open_installment_chart_window(case_record, parent_win):
 # ═════════════════════════════════════════════════════════════════════════════
 # INSTALLMENT CASES WINDOW
 # ═════════════════════════════════════════════════════════════════════════════
-INST_COLS   = ['file_no', 'date', 'customer', 'village', 'mobile_no', 'finance_amt', 'balance', 'id']
+INST_COLS   = ['file_no', 'date', 'customer_display', 'village', 'mobile_no', 'finance_amt', 'balance', 'id']
 INST_HEADS  = ['File No', 'Date', 'Customer (Father)', 'Village', 'Mobile No', 'Finance Amt', 'Balance', 'ID']
-INST_WIDTHS = [70, 95, 200, 130, 150, 110, 100, 55]
+INST_WIDTHS = [70, 95, 220, 130, 150, 110, 100, 55]
 
 
 def installment_window(parent):
@@ -1009,7 +1118,16 @@ def installment_window(parent):
     tree.tag_configure("even", background=BG_CARD)
     tree.tag_configure("odd",  background=BG_ROW_ALT)
 
-    all_data = [tuple(r.get(c, "") for c in INST_COLS) for r in INSTALLMENT_CASES]
+    def _inst_row(r):
+        row = []
+        for c in INST_COLS:
+            if c == 'customer_display':
+                row.append(fmt_customer(r.get('customer', ''), r.get('relation', '')))
+            else:
+                row.append(r.get(c, ''))
+        return tuple(row)
+
+    all_data = [_inst_row(r) for r in INSTALLMENT_CASES]
 
     def populate(rows):
         for item in tree.get_children(): tree.delete(item)
@@ -1077,8 +1195,9 @@ def installment_window(parent):
 
     # ── Actions ───────────────────────────────────────────────────────────
     def refresh():
+        _reload_all()
         all_data.clear()
-        all_data.extend(tuple(r.get(c, "") for c in INST_COLS) for r in INSTALLMENT_CASES)
+        all_data.extend(_inst_row(r) for r in INSTALLMENT_CASES)
         do_search()
         pending_lbl.config(text=f"NO OF PENDING CASES  {len(INSTALLMENT_CASES)}")
 
@@ -1918,7 +2037,16 @@ def credit_cases_window(parent):
     tree.tag_configure("even", background=BG_CARD)
     tree.tag_configure("odd",  background=BG_ROW_ALT)
 
-    all_data = [tuple(r.get(c, "") for c in INST_COLS) for r in CREDIT_CASES]
+    def _credit_row(r):
+        row = []
+        for c in INST_COLS:
+            if c == 'customer_display':
+                row.append(fmt_customer(r.get('customer', ''), r.get('relation', '')))
+            else:
+                row.append(r.get(c, ''))
+        return tuple(row)
+
+    all_data = [_credit_row(r) for r in CREDIT_CASES]
 
     def populate(rows):
         for item in tree.get_children(): tree.delete(item)
@@ -1983,8 +2111,9 @@ def credit_cases_window(parent):
 
     # ── Actions ───────────────────────────────────────────────────────────
     def refresh():
+        _reload_all()
         all_data.clear()
-        all_data.extend(tuple(r.get(c, "") for c in INST_COLS) for r in CREDIT_CASES)
+        all_data.extend(_credit_row(r) for r in CREDIT_CASES)
         do_search()
         pending_lbl.config(text=f"NO OF PENDING CASES  {len(CREDIT_CASES)}")
 
@@ -2053,8 +2182,12 @@ def due_report_window(parent):
               activebackground=BG_PANEL, relief="flat", bd=0,
               cursor="hand2", padx=12).pack(side=tk.RIGHT)
 
-    make_shortcut_bar(right, [("ESC", "CLOSE", ACCENT_RED), ("F9", "SEARCH", "#36bfd9"),
-                               ("F5", "REFRESH", ACCENT_YEL)])
+    make_shortcut_bar(right, [
+        ("ESC", "CLOSE",       ACCENT_RED),
+        ("F2",  "OPEN CASE",   ACCENT),
+        ("F9",  "SEARCH",      "#36bfd9"),
+        ("F5",  "REFRESH",     ACCENT_YEL),
+    ])
     tk.Frame(right, bg=BORDER, height=1).pack(fill=tk.X)
 
     sf = tk.Frame(right, bg=BG, padx=16, pady=8)
@@ -2145,9 +2278,27 @@ def due_report_window(parent):
     bal_lbl = tk.Label(bf, text=f"₹ {tb_:,.2f}", font=(FONT_MONO, 11, "bold"), fg=ACCENT_RED, bg=BG_CARD)
     bal_lbl.pack(anchor="w")
 
+    # ── Open credit case detail ────────────────────────────────────────────
+    def open_case(e=None):
+        sel = tree.selection()
+        if not sel:
+            messagebox.showinfo("Select", "Select a case first.", parent=win)
+            return
+        vals    = tree.item(sel[0], "values")
+        case_id = str(vals[-1])          # last col is id
+        _reload_all()
+        for cr in CREDIT_CASES:
+            if str(cr.get("id")) == case_id:
+                new_credit_case_form(win, data=cr,
+                                     on_save_callback=lambda _: win.after(100, refresh))
+                return
+        messagebox.showinfo("Not Found", f"Case ID {case_id} not found.", parent=win)
+
     win.bind("<Escape>", lambda e: win.destroy())
-    win.bind("<F9>", lambda e: se.focus_set())
+    win.bind("<F2>", open_case)
     win.bind("<F5>", refresh)
+    win.bind("<F9>", lambda e: se.focus_set())
+    tree.bind("<Double-1>", lambda e: open_case())
 
 
 def due_payments_window(parent):
@@ -2201,9 +2352,9 @@ def due_payments_window(parent):
                          fg=ACCENT2, bg="#1b2e4a", padx=6, pady=4)
     rec_badge.pack(side=tk.LEFT)
 
-    COLS   = ['file_no', 'date', 'customer', 'village', 'mobile_no', 'instalment_amt', 'missed_instalments', 'total_overdue', 'balance', 'id']
-    HEADS  = ['File No', 'Date', 'Customer', 'Village', 'Mobile No', 'Inst. Amt', 'Missed', 'Total Overdue', 'Total Balance', 'ID']
-    WIDTHS = [70, 90, 190, 120, 140, 100, 65, 110, 110, 50]
+    COLS   = ['file_no', 'date', 'customer_display', 'village', 'mobile_no', 'instalment_amt', 'missed_instalments', 'total_overdue', 'balance', 'id']
+    HEADS  = ['File No', 'Date', 'Customer (Father)', 'Village', 'Mobile No', 'Inst. Amt', 'Missed', 'Total Overdue', 'Total Balance', 'ID']
+    WIDTHS = [70, 90, 210, 120, 140, 100, 65, 110, 110, 50]
 
     tf4 = tk.Frame(right, bg=BG, padx=20)
     tf4.pack(fill=tk.BOTH, expand=True)
