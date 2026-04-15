@@ -151,7 +151,14 @@ def get_all_installment_cases():
     c.execute("SELECT * FROM installment_cases ORDER BY id")
     rows = c.fetchall()
     c.close(); conn.close()
-    return [_stringify(r) for r in rows]
+    result = []
+    for r in rows:
+        d = _stringify(r)
+        # provide unified keys so detail form always finds 'address' and 'remarks'
+        d['address'] = (d.get('address1', '') + ' ' + d.get('address2', '')).strip()
+        d['remarks'] = d.get('remarks_cust', '')
+        result.append(d)
+    return result
 
 
 def get_installment_case(case_id):
@@ -187,6 +194,11 @@ def save_installment_case(data):
         if f in int_fields:
             try: return int(str(data.get(f, 0) or 0))
             except: return 0
+        # map unified 'address' → address1, 'remarks' → remarks_cust
+        if f == 'address1':
+            return _v(data, 'address1') or _v(data, 'address')
+        if f == 'remarks_cust':
+            return _v(data, 'remarks_cust') or _v(data, 'remarks')
         return _v(data, f)
 
     case_id = data.get('id')
@@ -348,7 +360,7 @@ def get_due_report():
     conn = get_conn()
     c = conn.cursor(dictionary=True)
     c.execute("""
-        SELECT id, file_no, date, customer, village, mobile_no,
+        SELECT id, file_no, date, customer, relation, village, mobile_no,
                finance_amt, balance, next_due_date
         FROM credit_cases
         WHERE balance > 0
@@ -361,18 +373,28 @@ def get_due_report():
 
 def get_due_payments():
     """
-    Due Payments — Installment cases where ANY instalment is unpaid
-    (recv_date is empty), whether current or previous months.
-    One row per case, with count of unpaid instalments and total unpaid amount.
+    Due Payments — Installment cases where at least one instalment is OVERDUE.
+    An instalment is overdue when:
+      - recv_date is empty (not yet paid), AND
+      - inst_date has already passed today's date.
+
+    inst_date is stored as a string (DD/MM/YYYY or YYYY-MM-DD). We parse both
+    formats inside MySQL using STR_TO_DATE so the comparison is date-accurate.
+
+    One row per case, with count of overdue instalments and total overdue amount.
+    Cases with no payment chart rows yet are shown as a fallback if balance > 0.
     """
     conn = get_conn()
     c = conn.cursor(dictionary=True)
+
+    # Parse inst_date stored as 'DD/MM/YYYY' or 'YYYY-MM-DD'
     c.execute("""
         SELECT
             ic.id,
             ic.file_no,
             ic.date,
             ic.customer,
+            ic.relation,
             ic.village,
             ic.mobile_no,
             ic.finance_amt,
@@ -384,18 +406,25 @@ def get_due_payments():
         JOIN installment_payments ip ON ip.case_id = ic.id
         WHERE ic.balance > 0
           AND (ip.recv_date IS NULL OR ip.recv_date = '')
+          AND (
+                COALESCE(
+                    STR_TO_DATE(ip.inst_date, '%d/%m/%Y'),
+                    STR_TO_DATE(ip.inst_date, '%Y-%m-%d')
+                ) < CURDATE()
+              )
         GROUP BY ic.id
         ORDER BY missed_instalments DESC, ic.balance DESC
     """)
     rows = c.fetchall()
     c.close(); conn.close()
 
-    # Fallback: no payment chart rows entered yet — show all cases with balance
+    # Fallback: no payment chart rows entered yet (or all rows are future) —
+    # show all installment cases that still carry a positive balance.
     if not rows:
         conn2 = get_conn()
         c2 = conn2.cursor(dictionary=True)
         c2.execute("""
-            SELECT id, file_no, date, customer, village, mobile_no,
+            SELECT id, file_no, date, customer, relation, village, mobile_no,
                    finance_amt, balance, instalment_amt,
                    0 AS missed_instalments, balance AS total_overdue
             FROM installment_cases
