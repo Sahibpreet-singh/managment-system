@@ -39,11 +39,12 @@ def init_db():
     c.execute("CREATE DATABASE IF NOT EXISTS sandhu_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
     c.execute("USE sandhu_db")
 
+    # ✅ Installment Cases
     c.execute("""
         CREATE TABLE IF NOT EXISTS installment_cases (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             file_no         VARCHAR(50),
-            date            VARCHAR(20),
+            date            DATE,
             customer        VARCHAR(200),
             relation        VARCHAR(200),
             address1        VARCHAR(300),
@@ -79,13 +80,14 @@ def init_db():
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """)
 
+    # ✅ Installment Payments (MOST IMPORTANT)
     c.execute("""
         CREATE TABLE IF NOT EXISTS installment_payments (
             id          INT AUTO_INCREMENT PRIMARY KEY,
             case_id     INT NOT NULL,
             inst_no     INT,
-            inst_date   VARCHAR(20),
-            recv_date   VARCHAR(20),
+            inst_date   DATE,
+            recv_date   DATE,
             receipt_no  VARCHAR(100),
             amount      DECIMAL(15,2) DEFAULT 0,
             balance     DECIMAL(15,2) DEFAULT 0,
@@ -93,11 +95,12 @@ def init_db():
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """)
 
+    # ✅ Credit Cases
     c.execute("""
         CREATE TABLE IF NOT EXISTS credit_cases (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             file_no         VARCHAR(50),
-            date            VARCHAR(20),
+            date            DATE,
             customer        VARCHAR(200),
             relation        VARCHAR(200),
             address         VARCHAR(300),
@@ -108,7 +111,7 @@ def init_db():
             finance_amt     DECIMAL(15,2) DEFAULT 0,
             total_receipt   DECIMAL(15,2) DEFAULT 0,
             balance         DECIMAL(15,2) DEFAULT 0,
-            next_due_date   VARCHAR(20),
+            next_due_date   DATE,
             g1_name         VARCHAR(200),
             g1_relation     VARCHAR(200),
             g1_address      VARCHAR(300),
@@ -118,18 +121,20 @@ def init_db():
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """)
 
+    # ✅ Credit Payment Rows
     c.execute("""
         CREATE TABLE IF NOT EXISTS credit_payment_rows (
             id          INT AUTO_INCREMENT PRIMARY KEY,
             case_id     INT NOT NULL,
             description TEXT,
-            date        VARCHAR(20),
+            date        DATE,
             sale_amt    DECIMAL(15,2) DEFAULT 0,
             receipt     DECIMAL(15,2) DEFAULT 0,
             FOREIGN KEY (case_id) REFERENCES credit_cases(id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """)
 
+    # ✅ Villages
     c.execute("""
         CREATE TABLE IF NOT EXISTS villages (
             id      INT AUTO_INCREMENT PRIMARY KEY,
@@ -234,6 +239,11 @@ def get_installment_payments(case_id):
     c.close(); conn.close()
     return [_stringify(r) for r in rows]
 
+def to_mysql_date(d):
+    if not d or str(d).strip() == "":
+        return None
+    from datetime import datetime
+    return datetime.strptime(d, "%d/%m/%Y").strftime("%Y-%m-%d")
 
 def save_installment_payments(case_id, rows):
     conn = get_conn()
@@ -246,12 +256,12 @@ def save_installment_payments(case_id, rows):
             VALUES (%s,%s,%s,%s,%s,%s,%s)
         """, (case_id,
               r.get('inst_no', 0),
-              r.get('inst_date', ''),
-              r.get('recv_date', ''),
+              to_mysql_date(r.get('inst_date')),
+              to_mysql_date(r.get('recv_date')),
               r.get('receipt_no', ''),
               _flt(r.get('amount', 0)),
               _flt(r.get('balance', 0))))
-    total_recv = sum(_flt(r.get('amount', 0)) for r in rows if r.get('recv_date'))
+    total_recv = sum(_flt(r.get('amount', 0)) for r in rows if to_mysql_date(r.get('recv_date')))
     c.execute("""
         UPDATE installment_cases SET balance = amount_financed - %s WHERE id = %s
     """, (total_recv, case_id))
@@ -372,22 +382,9 @@ def get_due_report():
 
 
 def get_due_payments():
-    """
-    Due Payments — Installment cases where at least one instalment is OVERDUE.
-    An instalment is overdue when:
-      - recv_date is empty (not yet paid), AND
-      - inst_date has already passed today's date.
-
-    inst_date is stored as a string (DD/MM/YYYY or YYYY-MM-DD). We parse both
-    formats inside MySQL using STR_TO_DATE so the comparison is date-accurate.
-
-    One row per case, with count of overdue instalments and total overdue amount.
-    Cases with no payment chart rows yet are shown as a fallback if balance > 0.
-    """
     conn = get_conn()
     c = conn.cursor(dictionary=True)
 
-    # Parse inst_date stored as 'DD/MM/YYYY' or 'YYYY-MM-DD'
     c.execute("""
         SELECT
             ic.id,
@@ -400,39 +397,41 @@ def get_due_payments():
             ic.finance_amt,
             ic.balance,
             ic.instalment_amt,
-            COUNT(ip.id)           AS missed_instalments,
-            SUM(ic.instalment_amt) AS total_overdue
+
+            COUNT(
+                CASE 
+                    WHEN ip.recv_date IS NULL
+                    AND ip.inst_date < CURDATE()
+                    THEN 1
+                END
+            ) AS missed_instalments,
+
+            SUM(
+                CASE 
+                    WHEN ip.recv_date IS NULL
+                    AND ip.inst_date < CURDATE()
+                    THEN 
+                        CASE 
+                            WHEN ip.amount = 0 THEN ic.instalment_amt
+                            ELSE ip.amount
+                        END
+                    ELSE 0
+                END
+            ) AS total_overdue
+
         FROM installment_cases ic
-        JOIN installment_payments ip ON ip.case_id = ic.id
+        LEFT JOIN installment_payments ip ON ip.case_id = ic.id
+
         WHERE ic.balance > 0
-          AND (ip.recv_date IS NULL OR ip.recv_date = '')
-          AND (
-                COALESCE(
-                    STR_TO_DATE(ip.inst_date, '%d/%m/%Y'),
-                    STR_TO_DATE(ip.inst_date, '%Y-%m-%d')
-                ) < CURDATE()
-              )
+
         GROUP BY ic.id
-        ORDER BY missed_instalments DESC, ic.balance DESC
+        HAVING missed_instalments > 0
+
+        ORDER BY missed_instalments DESC
     """)
+
     rows = c.fetchall()
     c.close(); conn.close()
-
-    # Fallback: no payment chart rows entered yet (or all rows are future) —
-    # show all installment cases that still carry a positive balance.
-    if not rows:
-        conn2 = get_conn()
-        c2 = conn2.cursor(dictionary=True)
-        c2.execute("""
-            SELECT id, file_no, date, customer, relation, village, mobile_no,
-                   finance_amt, balance, instalment_amt,
-                   0 AS missed_instalments, balance AS total_overdue
-            FROM installment_cases
-            WHERE balance > 0
-            ORDER BY balance DESC
-        """)
-        rows = c2.fetchall()
-        c2.close(); conn2.close()
 
     return [_stringify(r) for r in rows]
 

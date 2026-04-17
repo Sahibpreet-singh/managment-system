@@ -53,9 +53,26 @@ def fmt_customer(name, relation=""):
         return f"{name} ({relation})"
     return name
 
+from datetime import datetime
+
+# UI → DB
+def to_mysql_date(d):
+    if not d or str(d).strip() == "":
+        return None
+    return datetime.strptime(d, "%d/%m/%Y").strftime("%Y-%m-%d")
+
+# DB → UI
+def to_display_date(d):
+    if not d:
+        return ""
+    try:
+        return datetime.strptime(str(d), "%Y-%m-%d").strftime("%d/%m/%Y")
+    except:
+        return d
+
 
 # ── Admin password ────────────────────────────────────────────────────────────
-ADMIN_PASSWORD = "admin123"   # ← change this to your preferred password
+ADMIN_PASSWORD = "9241"   # ← change this to your preferred password
 
 def admin_confirm(parent, action="delete this record"):
     """Show a password dialog. Returns True only if the correct password is entered."""
@@ -79,13 +96,13 @@ def admin_confirm(parent, action="delete this record"):
     body.pack(fill=tk.BOTH, expand=True)
 
     tk.Label(body, text="🔒  Admin Required",
-             font=(FONT_UI, 12, "bold"), fg=TEXT, bg=BG_PANEL).pack(anchor="w")
+             font=(FONT_UI, 15, "bold"), fg=TEXT, bg=BG_PANEL).pack(anchor="w")
     tk.Label(body, text=f"Enter admin password to {action}.",
-             font=(FONT_UI, 9), fg=TEXT_DIM, bg=BG_PANEL).pack(anchor="w", pady=(2, 12))
+             font=(FONT_UI, 12), fg=TEXT_DIM, bg=BG_PANEL).pack(anchor="w", pady=(2, 12))
 
     pw_var = tk.StringVar()
     pw_entry = tk.Entry(body, textvariable=pw_var, show="●",
-                        font=(FONT_UI, 11), fg=TEXT, bg=BG_INPUT,
+                        font=(FONT_UI, 14), fg=TEXT, bg=BG_INPUT,
                         insertbackground=ACCENT, relief="flat",
                         highlightthickness=1, highlightcolor=ACCENT,
                         highlightbackground=BORDER)
@@ -93,7 +110,7 @@ def admin_confirm(parent, action="delete this record"):
     pw_entry.focus_set()
 
     result = [False]
-    err_lbl = tk.Label(body, text="", font=(FONT_UI, 9), fg=ACCENT_RED, bg=BG_PANEL)
+    err_lbl = tk.Label(body, text="", font=(FONT_UI, 12), fg=ACCENT_RED, bg=BG_PANEL)
     err_lbl.pack(anchor="w", pady=(4, 0))
 
     def confirm(e=None):
@@ -108,10 +125,10 @@ def admin_confirm(parent, action="delete this record"):
     btn_row = tk.Frame(body, bg=BG_PANEL)
     btn_row.pack(fill=tk.X, pady=(10, 0))
     tk.Button(btn_row, text="✓  Confirm", command=confirm,
-              font=(FONT_UI, 10, "bold"), fg=BG, bg=ACCENT_RED,
+              font=(FONT_UI, 13, "bold"), fg=BG, bg=ACCENT_RED,
               relief="flat", bd=0, padx=16, pady=6, cursor="hand2").pack(side=tk.LEFT)
     tk.Button(btn_row, text="Cancel", command=dlg.destroy,
-              font=(FONT_UI, 10), fg=TEXT_DIM, bg=BG_PANEL,
+              font=(FONT_UI, 13), fg=TEXT_DIM, bg=BG_PANEL,
               relief="flat", bd=0, padx=16, pady=6, cursor="hand2").pack(side=tk.LEFT, padx=8)
 
     pw_entry.bind("<Return>", confirm)
@@ -137,11 +154,11 @@ def build_style():
     s.theme_use("clam")
     s.configure("T.Treeview",
                 background=BG_CARD, foreground=TEXT,
-                fieldbackground=BG_CARD, rowheight=34,
-                font=(FONT_UI, 10), borderwidth=0, relief="flat")
+                fieldbackground=BG_CARD, rowheight=40,
+                font=(FONT_UI, 13), borderwidth=0, relief="flat")
     s.configure("T.Treeview.Heading",
                 background=BG_PANEL, foreground=ACCENT,
-                font=(FONT_UI, 9, "bold"), borderwidth=0,
+                font=(FONT_UI, 12, "bold"), borderwidth=0,
                 relief="flat", padding=(8, 7))
     s.map("T.Treeview",
           background=[("selected", SEL_BG)],
@@ -180,18 +197,18 @@ def attach_selection_bar(tree, canvas_parent, color=ACCENT):
     return bar
 
 
-def make_entry(parent, width=18, **kw):
-    return tk.Entry(parent, font=(FONT_UI, 10), fg=TEXT, bg=BG_INPUT,
+def make_entry(parent, **kw):
+    return tk.Entry(parent, font=(FONT_UI, 13), fg=TEXT, bg=BG_INPUT,
                     insertbackground=ACCENT, relief="flat",
                     highlightthickness=1, highlightcolor=ACCENT,
-                    highlightbackground=BORDER, width=width, **kw)
+                    highlightbackground=BORDER, **kw)
 
 
 def section_header(parent, text, color=ACCENT):
     f = tk.Frame(parent, bg=BG_CARD)
     f.pack(fill=tk.X, pady=(12, 10))
     tk.Frame(f, bg=color, width=3).pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8))
-    tk.Label(f, text=text, font=(FONT_UI, 10, "bold"),
+    tk.Label(f, text=text, font=(FONT_UI, 13, "bold"),
              fg=color, bg=BG_CARD).pack(side=tk.LEFT)
     tk.Frame(f, bg=BORDER, height=1).pack(side=tk.LEFT, fill=tk.X,
                                            expand=True, padx=(12, 0))
@@ -203,9 +220,9 @@ def make_shortcut_bar(parent, shortcuts):
     for key, desc, color in shortcuts:
         chip = tk.Frame(bar, bg=BG_PANEL)
         chip.pack(side=tk.LEFT, padx=4)
-        tk.Label(chip, text=key, font=(FONT_UI, 8, "bold"),
+        tk.Label(chip, text=key, font=(FONT_UI, 11, "bold"),
                  fg=BG, bg=color, padx=6, pady=3).pack(side=tk.LEFT)
-        tk.Label(chip, text=f" {desc}", font=(FONT_UI, 8),
+        tk.Label(chip, text=f" {desc}", font=(FONT_UI, 11),
                  fg=TEXT_DIM, bg=BG_PANEL).pack(side=tk.LEFT)
     return bar
 
@@ -232,17 +249,17 @@ def new_case_form(parent, on_save_callback=None):
     tb_inner = tk.Frame(topbar, bg=BG_PANEL, padx=18, pady=12)
     tb_inner.pack(side=tk.LEFT)
     tk.Label(tb_inner, text="NEW CASE DETAILS",
-             font=(FONT_UI, 15, "bold"), fg=TEXT, bg=BG_PANEL).pack(anchor="w")
+             font=(FONT_UI, 18, "bold"), fg=TEXT, bg=BG_PANEL).pack(anchor="w")
     tk.Label(tb_inner, text="Complete all sections · Press F10 to save",
-             font=(FONT_UI, 9), fg=TEXT_DIM, bg=BG_PANEL).pack(anchor="w")
+             font=(FONT_UI, 12), fg=TEXT_DIM, bg=BG_PANEL).pack(anchor="w")
 
     # Case ID (top right)
     badge_f = tk.Frame(topbar, bg=BG_PANEL, padx=20)
     badge_f.pack(side=tk.RIGHT)
-    tk.Label(badge_f, text="CASE ID", font=(FONT_UI, 8),
+    tk.Label(badge_f, text="CASE ID", font=(FONT_UI, 11),
              fg=TEXT_DIM, bg=BG_PANEL).pack()
     tk.Label(badge_f, text=str(next_id),
-             font=(FONT_MONO, 22, "bold"), fg=ACCENT, bg=BG_PANEL).pack()
+             font=(FONT_MONO, 25, "bold"), fg=ACCENT, bg=BG_PANEL).pack()
 
     tk.Frame(win, bg=BORDER, height=1).pack(fill=tk.X)
     make_shortcut_bar(win, [
@@ -257,56 +274,60 @@ def new_case_form(parent, on_save_callback=None):
     canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
     body = tk.Frame(canvas, bg=BG, padx=20, pady=16)
+    body.pack(fill=tk.BOTH, expand=True)
     body_id = canvas.create_window((0, 0), window=body, anchor="nw")
     body.bind("<Configure>",
               lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-    canvas.bind("<Configure>",
-                lambda e: canvas.itemconfig(body_id, width=e.width))
+    def resize_body(event):
+        canvas.itemconfig(body_id, width=event.width)
+
+    canvas.bind("<Configure>", resize_body)
     canvas.bind_all("<MouseWheel>",
                     lambda e: canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
 
     entries = {}
 
     # ══════════════════════════════════════════════════════════════════════
-    # TOP ROW: 3 columns — Customer | Item Particulars | Photo
+    # TOP ROW: 2 columns — Customer LEFT | Item Particulars + Photo RIGHT
     # ══════════════════════════════════════════════════════════════════════
     top_row = tk.Frame(body, bg=BG)
-    top_row.pack(fill=tk.X, pady=(0, 8))
-    top_row.grid_columnconfigure(0, weight=3, minsize=320)
-    top_row.grid_columnconfigure(1, weight=4, minsize=420)
-    top_row.grid_columnconfigure(2, weight=2, minsize=200)
+    top_row.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+    top_row.grid_columnconfigure(0, weight=5)   # customer — good width
+    top_row.grid_columnconfigure(1, weight=7)   # item + photo — wider
 
     # ── CUSTOMER DETAILS ──────────────────────────────────────────────────
     cust_card = tk.Frame(top_row, bg=BG_CARD,
                          highlightbackground=BORDER, highlightthickness=1,
-                         padx=14, pady=10)
-    cust_card.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+                         padx=16, pady=12)
+    cust_card.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
     section_header(cust_card, "CUSTOMER DETAILS", ACCENT)
 
     cg = tk.Frame(cust_card, bg=BG_CARD)
     cg.pack(fill=tk.X)
+    cg.grid_columnconfigure(0, weight=0)
     cg.grid_columnconfigure(1, weight=1)
+    cg.grid_columnconfigure(2, weight=0)
     cg.grid_columnconfigure(3, weight=1)
 
-    # FILE NO + DATE
-    tk.Label(cg, text="FILE NO", font=(FONT_UI, 9), fg=TEXT_DIM,
-             bg=BG_CARD).grid(row=0, column=0, sticky="w", pady=4, padx=4)
-    e_fn = make_entry(cg, width=9)
-    e_fn.grid(row=0, column=1, sticky="ew", ipady=6, pady=4, padx=(0, 10))
+    # FILE NO + DATE on same row
+    tk.Label(cg, text="FILE NO", font=(FONT_UI, 13), fg=TEXT_DIM,
+             bg=BG_CARD, width=12, anchor="w").grid(row=0, column=0, sticky="w", pady=5, padx=4)
+    e_fn = make_entry(cg, width=10)
+    e_fn.grid(row=0, column=1, sticky="ew", ipady=7, pady=5, padx=(0, 14))
     entries['file_no'] = e_fn
 
-    tk.Label(cg, text="DATE", font=(FONT_UI, 9), fg=TEXT_DIM,
-             bg=BG_CARD).grid(row=0, column=2, sticky="w", pady=4, padx=4)
-    e_dt = make_entry(cg, width=11)
-    e_dt.insert(0, "DD/MM/YYYY")
+    tk.Label(cg, text="DATE", font=(FONT_UI, 13), fg=TEXT_DIM,
+             bg=BG_CARD).grid(row=0, column=2, sticky="w", pady=5, padx=4)
+    e_dt = make_entry(cg, width=13)
+    e_dt.insert(0, datetime.today().strftime("%d/%m/%Y"))
     e_dt.config(fg=TEXT_DIM)
-    e_dt.grid(row=0, column=3, sticky="ew", ipady=6, pady=4)
+    e_dt.grid(row=0, column=3, sticky="ew", ipady=7, pady=5)
     entries['date'] = e_dt
     e_dt.bind("<FocusIn>",
               lambda e: (e_dt.delete(0, tk.END), e_dt.config(fg=TEXT))
                         if e_dt.get() == "DD/MM/YYYY" else None)
     e_dt.bind("<FocusOut>",
-              lambda e: (e_dt.insert(0, "DD/MM/YYYY"), e_dt.config(fg=TEXT_DIM))
+              lambda e: (e_dt.insert(0, datetime.today().strftime("%d/%m/%Y")), e_dt.config(fg=TEXT_DIM))
                         if not e_dt.get() else None)
 
     for i, (lbl, key) in enumerate([
@@ -317,84 +338,131 @@ def new_case_form(parent, on_save_callback=None):
         ("MOBILE NO",   "mobile_no"),
         ("REMARKS",     "remarks_cust"),
     ], start=1):
-        tk.Label(cg, text=lbl, font=(FONT_UI, 9), fg=TEXT_DIM,
-                 bg=BG_CARD, width=11, anchor="w").grid(
-                 row=i, column=0, sticky="w", pady=3, padx=4)
-        e = make_entry(cg, width=22)
+        tk.Label(cg, text=lbl, font=(FONT_UI, 13), fg=TEXT_DIM,
+                 bg=BG_CARD, width=12, anchor="w").grid(
+                 row=i, column=0, sticky="w", pady=4, padx=4)
+        e = make_entry(cg, width=28)
         e.grid(row=i, column=1, columnspan=3, sticky="ew",
-               ipady=6, pady=3, padx=(0, 4))
+               ipady=7, pady=4, padx=(0, 4))
         entries[key] = e
 
     # VILLAGE combobox
-    tk.Label(cg, text="VILLAGE", font=(FONT_UI, 9), fg=TEXT_DIM,
-             bg=BG_CARD).grid(row=7, column=0, sticky="w", pady=3, padx=4)
+    tk.Label(cg, text="VILLAGE", font=(FONT_UI, 13), fg=TEXT_DIM,
+             bg=BG_CARD, width=12, anchor="w").grid(row=7, column=0, sticky="w", pady=4, padx=4)
     village_var = tk.StringVar()
     entries['village'] = village_var
     village_vals = db.get_villages()
     village_cb = ttk.Combobox(cg, textvariable=village_var, values=village_vals,
-                               style="Dark.TCombobox", font=(FONT_UI, 10), width=20)
+                               style="Dark.TCombobox", font=(FONT_UI, 13), width=24)
     village_cb.grid(row=7, column=1, columnspan=3, sticky="ew",
-                    ipady=4, pady=3, padx=(0, 4))
+                    ipady=5, pady=4, padx=(0, 4))
 
-    # ── ITEM PARTICULARS ──────────────────────────────────────────────────
+    # ── ITEM PARTICULARS + PHOTO (right column) ───────────────────────────
     item_card = tk.Frame(top_row, bg=BG_CARD,
                          highlightbackground=BORDER, highlightthickness=1,
-                         padx=14, pady=10)
-    item_card.grid(row=0, column=1, sticky="nsew", padx=(0, 8))
+                         padx=16, pady=12)
+    item_card.grid(row=0, column=1, sticky="nsew")
     section_header(item_card, "ITEM PARTICULARS", ACCENT_PUR)
 
-    ig = tk.Frame(item_card, bg=BG_CARD)
-    ig.pack(fill=tk.X)
+    # item_card splits into fields (left) and photo (right)
+    item_inner = tk.Frame(item_card, bg=BG_CARD)
+    item_inner.pack(fill=tk.X)
+    item_inner.grid_columnconfigure(0, weight=1)
+    item_inner.grid_columnconfigure(1, weight=0)
+
+    ig = tk.Frame(item_inner, bg=BG_CARD)
+    ig.grid(row=0, column=0, sticky="nsew", padx=(0, 14))
+    ig.grid_columnconfigure(0, weight=0)
     ig.grid_columnconfigure(1, weight=1)
+    ig.grid_columnconfigure(2, weight=0)
     ig.grid_columnconfigure(3, weight=1)
 
     # ITEM (full row)
-    tk.Label(ig, text="ITEM", font=(FONT_UI, 9), fg=TEXT_DIM,
-             bg=BG_CARD, width=11, anchor="w").grid(
-             row=0, column=0, sticky="w", pady=4, padx=4)
-    e_item = make_entry(ig, width=34)
+    tk.Label(ig, text="ITEM", font=(FONT_UI, 13), fg=TEXT_DIM,
+             bg=BG_CARD, width=14, anchor="w").grid(
+             row=0, column=0, sticky="w", pady=5, padx=4)
+    e_item = make_entry(ig, width=38)
     e_item.grid(row=0, column=1, columnspan=3, sticky="ew",
-                ipady=6, pady=4, padx=(0, 4))
+                ipady=7, pady=5, padx=(0, 4))
     entries['item'] = e_item
 
     # BRAND + MODEL
-    tk.Label(ig, text="BRAND", font=(FONT_UI, 9), fg=TEXT_DIM,
-             bg=BG_CARD).grid(row=1, column=0, sticky="w", pady=4, padx=4)
-    e_brand = make_entry(ig, width=14)
-    e_brand.grid(row=1, column=1, sticky="ew", ipady=6, pady=4, padx=(0, 10))
+    tk.Label(ig, text="BRAND", font=(FONT_UI, 13), fg=TEXT_DIM,
+             bg=BG_CARD, width=14, anchor="w").grid(row=1, column=0, sticky="w", pady=5, padx=4)
+    e_brand = make_entry(ig, width=16)
+    e_brand.grid(row=1, column=1, sticky="ew", ipady=7, pady=5, padx=(0, 12))
     entries['brand'] = e_brand
 
-    tk.Label(ig, text="MODEL", font=(FONT_UI, 9), fg=TEXT_DIM,
-             bg=BG_CARD).grid(row=1, column=2, sticky="w", pady=4, padx=4)
-    e_model = make_entry(ig, width=14)
-    e_model.grid(row=1, column=3, sticky="ew", ipady=6, pady=4)
+    tk.Label(ig, text="MODEL", font=(FONT_UI, 13), fg=TEXT_DIM,
+             bg=BG_CARD).grid(row=1, column=2, sticky="w", pady=5, padx=4)
+    e_model = make_entry(ig, width=16)
+    e_model.grid(row=1, column=3, sticky="ew", ipady=7, pady=5)
     entries['model'] = e_model
 
     # SRNO
-    tk.Label(ig, text="SRNO", font=(FONT_UI, 9), fg=TEXT_DIM,
-             bg=BG_CARD, width=11, anchor="w").grid(
-             row=2, column=0, sticky="w", pady=4, padx=4)
-    e_srno = make_entry(ig, width=34)
+    tk.Label(ig, text="SRNO", font=(FONT_UI, 13), fg=TEXT_DIM,
+             bg=BG_CARD, width=14, anchor="w").grid(
+             row=2, column=0, sticky="w", pady=5, padx=4)
+    e_srno = make_entry(ig, width=38)
     e_srno.grid(row=2, column=1, columnspan=3, sticky="ew",
-                ipady=6, pady=4, padx=(0, 4))
+                ipady=7, pady=5, padx=(0, 4))
     entries['srno'] = e_srno
 
     # INVOICE NO
-    tk.Label(ig, text="INVOICE NO", font=(FONT_UI, 9), fg=TEXT_DIM,
-             bg=BG_CARD, width=11, anchor="w").grid(
-             row=3, column=0, sticky="w", pady=4, padx=4)
-    e_inv = make_entry(ig, width=34)
+    tk.Label(ig, text="INVOICE NO", font=(FONT_UI, 13), fg=TEXT_DIM,
+             bg=BG_CARD, width=14, anchor="w").grid(
+             row=3, column=0, sticky="w", pady=5, padx=4)
+    e_inv = make_entry(ig, width=38)
     e_inv.grid(row=3, column=1, columnspan=3, sticky="ew",
-               ipady=6, pady=4, padx=(0, 4))
+               ipady=7, pady=5, padx=(0, 4))
     entries['invoice_no'] = e_inv
 
+    # ── Photo placeholder — inside item card, right side ──────────────────
+    photo_col = tk.Frame(item_inner, bg=BG_CARD, width=180)
+    photo_col.grid(row=0, column=1, sticky="ns", pady=(0, 0))
+    photo_col.grid_propagate(False)
+
+    tk.Label(photo_col, text="PHOTO", font=(FONT_UI, 11, "bold"),
+             fg=TEXT_DIM, bg=BG_CARD).pack(pady=(4, 4))
+
+    ph_frame = tk.Frame(photo_col, bg=BG_INPUT,
+                        highlightbackground=BORDER, highlightthickness=1,
+                        width=168, height=155)
+    ph_frame.pack(fill=tk.BOTH, expand=True, padx=6)
+    ph_frame.pack_propagate(False)
+
+    ph_canvas = tk.Canvas(ph_frame, bg=BG_INPUT, highlightthickness=0)
+    ph_canvas.pack(fill=tk.BOTH, expand=True)
+
+    def draw_x(e=None):
+        ph_canvas.delete("all")
+        w = ph_canvas.winfo_width() or 162
+        h = ph_canvas.winfo_height() or 148
+        ph_canvas.create_rectangle(2, 2, w-2, h-2, outline=BORDER, width=1)
+        ph_canvas.create_line(2, 2, w-2, h-2, fill=BORDER, width=1)
+        ph_canvas.create_line(w-2, 2, 2, h-2, fill=BORDER, width=1)
+        ph_canvas.create_text(w//2, h//2, text="No Photo",
+                              fill=TEXT_DIM, font=(FONT_UI, 12))
+
+    ph_canvas.bind("<Configure>", draw_x)
+    ph_canvas.after(150, draw_x)
+
+    tk.Button(photo_col, text="📷  Upload",
+              font=(FONT_UI, 11), fg=TEXT_DIM, bg=BG_PANEL,
+              relief="flat", bd=0, cursor="hand2", pady=4,
+              command=lambda: messagebox.showinfo(
+                  "Photo", "Photo upload feature coming soon.", parent=win)
+              ).pack(fill=tk.X, padx=6, pady=(6, 0))
+
     # ── Financial section separator ───────────────────────────────────────
-    tk.Frame(item_card, bg=BORDER, height=1).pack(fill=tk.X, pady=8)
+    tk.Frame(item_card, bg=BORDER, height=1).pack(fill=tk.X, pady=(10, 8))
 
     fg2 = tk.Frame(item_card, bg=BG_CARD)
-    fg2.pack(fill=tk.X)
-    for i in range(4):
-     fg2.grid_columnconfigure(i, weight=1)
+    fg2.pack(fill=tk.BOTH,expand=True)
+    fg2.grid_columnconfigure(0, weight=1)  # label
+    fg2.grid_columnconfigure(1, weight=3)  # input
+    fg2.grid_columnconfigure(2, weight=1)  # label
+    fg2.grid_columnconfigure(3, weight=3)  # input
 
     amount_var   = tk.StringVar()
     advance_var  = tk.StringVar()
@@ -402,6 +470,8 @@ def new_case_form(parent, on_save_callback=None):
     no_inst_var  = tk.StringVar()
     inst_amt_var = tk.StringVar(value="0.00")
     final_var    = tk.StringVar(value="0.00")
+    interest_var = tk.StringVar(value="0.00")   # interest value (amount or %)
+    interest_mode = tk.StringVar(value="amount") # "amount" or "percent"
 
     entries.update({
         'amount':          amount_var,
@@ -410,28 +480,36 @@ def new_case_form(parent, on_save_callback=None):
         'no_instalments':  no_inst_var,
         'instalment_amt':  inst_amt_var,
         'final_amount':    final_var,
+        'interest':        interest_var,
+        'interest_mode':   interest_mode,
     })
 
     def recalculate(*_):
         try:
-            amt = float(amount_var.get()  or 0)
-            adv = float(advance_var.get() or 0)
-            n   = float(no_inst_var.get() or 0)
-            fin = amt - adv
+            amt  = float(amount_var.get()  or 0)
+            adv  = float(advance_var.get() or 0)
+            n    = float(no_inst_var.get() or 0)
+            iraw = float(interest_var.get() or 0)
+            fin  = amt - adv
+            if interest_mode.get() == "percent":
+                interest_amt = fin * iraw / 100.0
+            else:
+                interest_amt = iraw
+            total = fin + interest_amt
             amt_fin_var.set(f"{fin:.2f}")
             if n > 0:
-                inst = fin / n
-                inst_amt_var.set(f"{inst:.2f}")
-                final_var.set(f"{fin:.2f}")
+                inst_amt_var.set(f"{total / n:.2f}")
             else:
                 inst_amt_var.set("0.00")
-                final_var.set(f"{fin:.2f}")
+            final_var.set(f"{total:.2f}")
         except ValueError:
             pass
 
-    amount_var.trace_add("write",  recalculate)
-    advance_var.trace_add("write", recalculate)
-    no_inst_var.trace_add("write", recalculate)
+    amount_var.trace_add("write",    recalculate)
+    advance_var.trace_add("write",   recalculate)
+    no_inst_var.trace_add("write",   recalculate)
+    interest_var.trace_add("write",  recalculate)
+    interest_mode.trace_add("write", recalculate)
 
     fin_rows = [
         ("AMOUNT",             amount_var,  0, 0, TEXT,       False),
@@ -442,69 +520,58 @@ def new_case_form(parent, on_save_callback=None):
         ("FINAL AMOUNT",       final_var,   2, 2, ACCENT_RED, True),
     ]
     for lbl_t, var, r, c, color, ro in fin_rows:
-        tk.Label(fg2, text=lbl_t, font=(FONT_UI, 9), fg=TEXT_DIM,
+        tk.Label(fg2, text=lbl_t, font=(FONT_UI, 13), fg=TEXT_DIM,
                  bg=BG_CARD, anchor="w").grid(
                  row=r, column=c*2, sticky="w", pady=5, padx=4)
         state = "readonly" if ro else "normal"
         rbg   = BG_CARD if ro else BG_INPUT
         e = tk.Entry(fg2, textvariable=var, state=state,
-                     font=(FONT_MONO, 10, "bold"), fg=color, bg=rbg,
+                     font=(FONT_MONO, 13, "bold"), fg=color, bg=rbg,
                      readonlybackground=rbg,
                      insertbackground=ACCENT, relief="flat",
                      highlightthickness=1, highlightcolor=ACCENT,
-                     highlightbackground=BORDER, width=14)
-        e.grid(row=r, column=c*2+1, sticky="ew", ipady=7, pady=5, padx=(0, 8))
+                     highlightbackground=BORDER)
+        e.grid(row=r, column=c*2+1, sticky="ew", ipady=8, pady=5, padx=(0, 8))
 
-    # ── PHOTO PLACEHOLDER ─────────────────────────────────────────────────
-    photo_card = tk.Frame(top_row, bg=BG_CARD,
-                          highlightbackground=BORDER, highlightthickness=1,
-                          padx=10, pady=10)
-    photo_card.grid(row=0, column=2, sticky="nsew")
+    # ── Interest row ─────────────────────────────────────────────────────────
+    tk.Label(fg2, text="INTEREST", font=(FONT_UI, 13), fg=TEXT_DIM,
+             bg=BG_CARD, anchor="w").grid(row=3, column=0, sticky="w", pady=5, padx=4)
+    e_int = tk.Entry(fg2, textvariable=interest_var,
+                     font=(FONT_MONO, 13, "bold"), fg=ACCENT_PUR, bg=BG_INPUT,
+                     insertbackground=ACCENT, relief="flat",
+                     highlightthickness=1, highlightcolor=ACCENT,
+                     highlightbackground=BORDER)
+    e_int.grid(row=3, column=1, sticky="ew", ipady=8, pady=5, padx=(0, 8))
 
-    tk.Label(photo_card, text="PHOTO", font=(FONT_UI, 8, "bold"),
-             fg=TEXT_DIM, bg=BG_CARD).pack()
+    # Toggle button: ₹ Amount  ↔  % Percent
+    def _toggle_mode():
+        if interest_mode.get() == "amount":
+            interest_mode.set("percent")
+            mode_btn.config(text="% Percent", fg=BG, bg=ACCENT_PUR)
+        else:
+            interest_mode.set("amount")
+            mode_btn.config(text="₹ Amount", fg=BG, bg=ACCENT)
+        recalculate()
 
-    ph_frame = tk.Frame(photo_card, bg=BG_INPUT,
-                        highlightbackground=BORDER, highlightthickness=1)
-    ph_frame.pack(fill=tk.BOTH, expand=True, pady=6)
-
-    ph_canvas = tk.Canvas(ph_frame, bg=BG_INPUT, highlightthickness=0)
-    ph_canvas.pack(fill=tk.BOTH, expand=True)
-
-    def draw_x(e=None):
-        ph_canvas.delete("all")
-        w = ph_canvas.winfo_width() or 170
-        h = ph_canvas.winfo_height() or 170
-        ph_canvas.create_rectangle(2, 2, w-2, h-2, outline=BORDER, width=1)
-        ph_canvas.create_line(2, 2, w-2, h-2, fill=BORDER, width=1)
-        ph_canvas.create_line(w-2, 2, 2, h-2, fill=BORDER, width=1)
-        ph_canvas.create_text(w//2, h//2, text="No Photo",
-                              fill=TEXT_DIM, font=(FONT_UI, 9))
-
-    ph_canvas.bind("<Configure>", draw_x)
-    ph_canvas.after(150, draw_x)
-
-    tk.Button(photo_card, text="📷  Upload",
-              font=(FONT_UI, 8), fg=TEXT_DIM, bg=BG_PANEL,
-              relief="flat", bd=0, cursor="hand2", pady=4,
-              command=lambda: messagebox.showinfo(
-                  "Photo", "Photo upload feature coming soon.", parent=win)
-              ).pack(fill=tk.X, pady=(4, 0))
+    mode_btn = tk.Button(fg2, text="₹ Amount", command=_toggle_mode,
+                         font=(FONT_UI, 11, "bold"), fg=BG, bg=ACCENT,
+                         relief="flat", bd=0, padx=8, pady=4, cursor="hand2")
+    mode_btn.grid(row=3, column=2, columnspan=2, sticky="w", padx=4, pady=5)
 
     # ══════════════════════════════════════════════════════════════════════
     # BOTTOM ROW: Two guarantors side-by-side
     # ══════════════════════════════════════════════════════════════════════
     guar_row = tk.Frame(body, bg=BG)
-    guar_row.pack(fill=tk.X, pady=(8, 0))
+    guar_row.pack(fill=tk.BOTH,expand=True, pady=(8, 0))
     guar_row.grid_columnconfigure(0, weight=1)
     guar_row.grid_columnconfigure(1, weight=1)
 
     def build_guarantor(parent_frame, prefix, title, color, col):
         card = tk.Frame(parent_frame, bg=BG_CARD,
                         highlightbackground=BORDER, highlightthickness=1,
-                        padx=14, pady=10)
+                        padx=16, pady=12)
         card.grid(row=0, column=col, sticky="nsew",
-                  padx=(0, 8) if col == 0 else 0)
+                  padx=(0, 10) if col == 0 else 0)
         section_header(card, title, color)
 
         gg = tk.Frame(card, bg=BG_CARD)
@@ -520,11 +587,11 @@ def new_case_form(parent, on_save_callback=None):
             ("MOBILE NO",   f"{prefix}_mobile"),
             ("REMARKS",     f"{prefix}_remarks"),
         ]):
-            tk.Label(gg, text=lbl, font=(FONT_UI, 9), fg=TEXT_DIM,
-                     bg=BG_CARD, width=12, anchor="w").grid(
+            tk.Label(gg, text=lbl, font=(FONT_UI, 13), fg=TEXT_DIM,
+                     bg=BG_CARD, width=13, anchor="w").grid(
                      row=i, column=0, sticky="w", pady=4, padx=4)
-            e = make_entry(gg, width=28)
-            e.grid(row=i, column=1, sticky="ew", ipady=6, pady=4, padx=(0, 4))
+            e = make_entry(gg, width=30)
+            e.grid(row=i, column=1, sticky="ew", ipady=7, pady=4, padx=(0, 4))
             entries[key] = e
 
     build_guarantor(guar_row, "g1", "FIRST GUARANTOR PARTICULARS",  ACCENT,     0)
@@ -534,7 +601,7 @@ def new_case_form(parent, on_save_callback=None):
     # BOTTOM ACTION BAR (pinned)
     # ══════════════════════════════════════════════════════════════════════
     tk.Frame(win, bg=BORDER, height=1).pack(fill=tk.X, side=tk.BOTTOM)
-    action_bar = tk.Frame(win, bg=BG_PANEL, pady=12, padx=24)
+    action_bar = tk.Frame(win, bg=BG_PANEL, pady=12, padx=10)
     action_bar.pack(fill=tk.X, side=tk.BOTTOM)
 
     def get(key):
@@ -552,7 +619,7 @@ def new_case_form(parent, on_save_callback=None):
 
         record = {
             'file_no':      file_no,
-            'date':         get('date'),
+            'date':         to_mysql_date(get('date')),
             'customer':     get('account'),
             'village':      get('village'),
             'mobile_no':    get('mobile_no'),
@@ -572,6 +639,8 @@ def new_case_form(parent, on_save_callback=None):
             'no_instalments': get('no_instalments'),
             'instalment_amt': get('instalment_amt'),
             'final_amount': get('final_amount'),
+            'interest':      get('interest'),
+            'interest_mode': get('interest_mode'),
             'g1_name':      get('g1_name'),
             'g1_relation':  get('g1_relation'),
             'g1_address':   (get('g1_address1') + " " + get('g1_address2')).strip(),
@@ -598,22 +667,20 @@ def new_case_form(parent, on_save_callback=None):
                             parent=win)
         win.destroy()
 
-    # Cancel button
-    tk.Button(action_bar, text="✕  CANCEL  ESC",
-              command=win.destroy,
-              font=(FONT_UI, 11, "bold"), fg=ACCENT_RED, bg=BG_CARD,
-              activeforeground=ACCENT_RED, activebackground=BG_PANEL,
-              relief="flat", bd=0, cursor="hand2", padx=20, pady=10,
-              highlightthickness=1, highlightbackground=ACCENT_RED
-              ).pack(side=tk.LEFT, padx=(0, 16))
+    # Save button (rightmost)
+    # tk.Button(action_bar, text="💾  SAVE & EXIT  F10",
+    #         command=save_and_exit,
+    #         font=(FONT_UI, 14, "bold"), fg=BG, bg=ACCENT2,
+    #         relief="flat", bd=0, cursor="hand2", padx=24, pady=10
+    #         ).pack(side=tk.RIGHT)
 
-    # Save button
-    tk.Button(action_bar, text="💾  SAVE & EXIT  F10",
-              command=save_and_exit,
-              font=(FONT_UI, 11, "bold"), fg=BG, bg=ACCENT2,
-              activeforeground=BG, activebackground="#2ebd68",
-              relief="flat", bd=0, cursor="hand2", padx=24, pady=10,
-              ).pack(side=tk.LEFT)
+    # # Cancel button (left of save)
+    # tk.Button(action_bar, text="✕  CANCEL  ESC",
+    #         command=win.destroy,
+    #         font=(FONT_UI, 14, "bold"), fg=ACCENT_RED, bg=BG_CARD,
+    #         relief="flat", bd=0, cursor="hand2", padx=20, pady=10,
+    #         highlightthickness=1, highlightbackground=ACCENT_RED
+    #         ).pack(side=tk.RIGHT, padx=(0, 16))
 
     win.bind("<F10>",    save_and_exit)
     win.bind("<Escape>", lambda e: win.destroy())
@@ -637,16 +704,16 @@ def open_installment_case_detail(data, refresh_callback=None):
     tb_inner = tk.Frame(topbar, bg=BG_PANEL, padx=18, pady=12)
     tb_inner.pack(side=tk.LEFT)
     tk.Label(tb_inner, text="CASE DETAILS",
-             font=(FONT_UI, 15, "bold"), fg=TEXT, bg=BG_PANEL).pack(anchor="w")
+             font=(FONT_UI, 18, "bold"), fg=TEXT, bg=BG_PANEL).pack(anchor="w")
     tk.Label(tb_inner, text=f"File No: {data.get('file_no', '')}  ·  {fmt_customer(data.get('customer', ''), data.get('relation', ''))}",
-             font=(FONT_UI, 9), fg=TEXT_DIM, bg=BG_PANEL).pack(anchor="w")
+             font=(FONT_UI, 12), fg=TEXT_DIM, bg=BG_PANEL).pack(anchor="w")
 
     badge_f = tk.Frame(topbar, bg=BG_PANEL, padx=20)
     badge_f.pack(side=tk.RIGHT)
-    tk.Label(badge_f, text="CASE ID", font=(FONT_UI, 8),
+    tk.Label(badge_f, text="CASE ID", font=(FONT_UI, 11),
              fg=TEXT_DIM, bg=BG_PANEL).pack()
     tk.Label(badge_f, text=str(data.get('id', '')),
-             font=(FONT_MONO, 22, "bold"), fg=ACCENT, bg=BG_PANEL).pack()
+             font=(FONT_MONO, 25, "bold"), fg=ACCENT, bg=BG_PANEL).pack()
 
     tk.Frame(root, bg=BORDER, height=1).pack(fill=tk.X)
     make_shortcut_bar(root, [
@@ -678,7 +745,7 @@ def open_installment_case_detail(data, refresh_callback=None):
         return card
 
     def add_row(grid, label, key, row, value="", span=3):
-        tk.Label(grid, text=label, font=(FONT_UI, 9), fg=TEXT_DIM,
+        tk.Label(grid, text=label, font=(FONT_UI, 12), fg=TEXT_DIM,
                  bg=BG_CARD, width=12, anchor="w").grid(
                  row=row, column=0, sticky="w", pady=4, padx=4)
         e = make_entry(grid, width=28)
@@ -702,7 +769,7 @@ def open_installment_case_detail(data, refresh_callback=None):
 
     cust_fields = [
         ("FILE NO",     "file_no",   data.get("file_no", "")),
-        ("DATE",        "date",      data.get("date", "")),
+        ("DATE",        "date",      to_display_date(data.get("date", ""))),
         ("ACCOUNT",     "customer",  data.get("customer", "")),
         ("W/O D/O S/O", "relation",  data.get("relation", "")),
         ("ADDRESS",     "address",   data.get("address", "")),
@@ -713,13 +780,13 @@ def open_installment_case_detail(data, refresh_callback=None):
         add_row(cg, lbl, key, i, val)
 
     # Village combobox
-    tk.Label(cg, text="VILLAGE", font=(FONT_UI, 9), fg=TEXT_DIM,
+    tk.Label(cg, text="VILLAGE", font=(FONT_UI, 12), fg=TEXT_DIM,
              bg=BG_CARD).grid(row=len(cust_fields), column=0, sticky="w", pady=3, padx=4)
     village_var = tk.StringVar(value=data.get("village", ""))
     entries['village'] = village_var
     village_vals = db.get_villages()
     ttk.Combobox(cg, textvariable=village_var, values=village_vals,
-                 style="Dark.TCombobox", font=(FONT_UI, 10), width=20
+                 style="Dark.TCombobox", font=(FONT_UI, 13), width=20
                  ).grid(row=len(cust_fields), column=1, sticky="ew", ipady=4, pady=3, padx=(0, 4))
 
     # Item card
@@ -845,7 +912,7 @@ def open_installment_case_detail(data, refresh_callback=None):
 
     tk.Button(action_bar, text="✕  CANCEL  ESC",
               command=root.destroy,
-              font=(FONT_UI, 11, "bold"), fg=ACCENT_RED, bg=BG_CARD,
+              font=(FONT_UI, 14, "bold"), fg=ACCENT_RED, bg=BG_CARD,
               activeforeground=ACCENT_RED, activebackground=BG_PANEL,
               relief="flat", bd=0, cursor="hand2", padx=20, pady=10,
               highlightthickness=1, highlightbackground=ACCENT_RED
@@ -853,7 +920,7 @@ def open_installment_case_detail(data, refresh_callback=None):
 
     tk.Button(action_bar, text="💾  SAVE & EXIT  F10",
               command=save_changes,
-              font=(FONT_UI, 11, "bold"), fg=BG, bg=ACCENT2,
+              font=(FONT_UI, 14, "bold"), fg=BG, bg=ACCENT2,
               activeforeground=BG, activebackground="#2ebd68",
               relief="flat", bd=0, cursor="hand2", padx=24, pady=10,
               ).pack(side=tk.LEFT)
@@ -890,19 +957,19 @@ def open_installment_chart_window(case_record, parent_win):
     tk.Label(hi, text="INSTALLMENT CHART", font=(FONT_UI, 13, "bold"),
              fg=TEXT, bg=BG_PANEL).pack(anchor="w")
     tk.Label(hi, text=f"{customer}  ·  Mobile: {mobile}  ·  Case ID: {case_id_str}",
-             font=(FONT_UI, 9), fg=TEXT_DIM, bg=BG_PANEL).pack(anchor="w")
+             font=(FONT_UI, 12), fg=TEXT_DIM, bg=BG_PANEL).pack(anchor="w")
 
     bal_badge_var = tk.StringVar(value=f"₹ {balance_orig}")
-    tk.Label(header, textvariable=bal_badge_var, font=(FONT_MONO, 12, "bold"),
+    tk.Label(header, textvariable=bal_badge_var, font=(FONT_MONO, 15, "bold"),
              fg=ACCENT_YEL, bg=BG_PANEL).pack(side="right", padx=20)
-    tk.Label(header, text="BALANCE:", font=(FONT_UI, 9), fg=TEXT_DIM,
+    tk.Label(header, text="BALANCE:", font=(FONT_UI, 12), fg=TEXT_DIM,
              bg=BG_PANEL).pack(side="right")
 
     # Show "Amount to be Paid per Instalment" once in header
     tk.Frame(header, bg=BORDER, width=1).pack(side="right", fill="y", padx=4)
-    tk.Label(header, text=f"₹ {inst_amt}", font=(FONT_MONO, 12, "bold"),
+    tk.Label(header, text=f"₹ {inst_amt}", font=(FONT_MONO, 15, "bold"),
              fg=ACCENT2, bg=BG_PANEL).pack(side="right", padx=4)
-    tk.Label(header, text="AMT TO BE PAID:", font=(FONT_UI, 9), fg=TEXT_DIM,
+    tk.Label(header, text="AMT TO BE PAID:", font=(FONT_UI, 12), fg=TEXT_DIM,
              bg=BG_PANEL).pack(side="right")
 
     tk.Frame(top, bg=BORDER, height=1).pack(fill="x")
@@ -918,7 +985,7 @@ def open_installment_chart_window(case_record, parent_win):
     # ── Table ─────────────────────────────────────────────────────────────
     columns  = ("no", "inst_date", "rec_date", "receipt_no", "amount", "balance")
     headings = ["NO.", "INST. DATE", "RECVD. DATE", "RECEIPT NO.", "AMOUNT PAID", "BALANCE"]
-    col_widths = [50, 120, 120, 120, 120, 120]
+    col_widths = [55, 150, 150, 160, 150, 150]
 
     tbl_outer = tk.Frame(top, bg=BG, padx=20, pady=8)
     tbl_outer.pack(fill="both", expand=True)
@@ -943,7 +1010,7 @@ def open_installment_chart_window(case_record, parent_win):
     tree2.tag_configure("even",    background=BG_CARD)
     tree2.tag_configure("odd",     background=BG_ROW_ALT)
     tree2.tag_configure("paid",    background="#f0fdf4", foreground="#15803d")
-    tree2.tag_configure("unpaid",  background="#fff7ed", foreground="#c2410c")
+    tree2.tag_configure("unpaid",  background="#fffbeb", foreground="#b45309")
     tree2.tag_configure("overdue", background="#fff0f0", foreground="#b91c1c")
 
     attach_selection_bar(tree2, tbl_outer, color=ACCENT2)
@@ -979,17 +1046,34 @@ def open_installment_chart_window(case_record, parent_win):
             inst_date = p.get('inst_date', '')
             tree2.insert("", "end", values=(
                 p.get('inst_no', i + 1),
-                inst_date,
-                recv,
+                to_display_date(inst_date),
+                to_display_date(recv),
                 p.get('receipt_no', ''),
                 p.get('amount', ''),
                 p.get('balance', balance_orig),
-            ), tags=(_row_tag(i, recv, inst_date),))
+            ), tags=(_row_tag(i, to_display_date(recv), to_display_date(inst_date)),))
     else:
+        # Generate monthly instalment dates starting from the case date (or today)
+        import calendar
+        raw_case_date = r.get('date', '')
+        try:
+            start_date = _dt_chart.datetime.strptime(str(raw_case_date).strip(), "%Y-%m-%d").date()
+        except Exception:
+            try:
+                start_date = _dt_chart.datetime.strptime(str(raw_case_date).strip(), "%d/%m/%Y").date()
+            except Exception:
+                start_date = _dt_chart.date.today()
         for i in range(1, no_inst + 1):
+            # Advance by i months from start_date
+            month = start_date.month - 1 + i
+            year  = start_date.year + month // 12
+            month = month % 12 + 1
+            day   = min(start_date.day, calendar.monthrange(year, month)[1])
+            inst_date_obj = _dt_chart.date(year, month, day)
+            inst_date_str = inst_date_obj.strftime("%d/%m/%Y")
             tree2.insert("", "end", values=(
-                i, f"30/{str(i).zfill(2)}/2024", "", "", "", balance_orig
-            ), tags=("unpaid",))
+                i, inst_date_str, "", "", "", balance_orig
+            ), tags=(_row_tag(i, "", inst_date_str),))
 
     # ── Inline cell editor ────────────────────────────────────────────────
     edit_entry = [None]
@@ -1009,7 +1093,7 @@ def open_installment_chart_window(case_record, parent_win):
             return
         x, y, w, h = bbox
         cur = tree2.item(item, "values")[ci]
-        ent = tk.Entry(tree2, font=(FONT_MONO, 10), fg=TEXT, bg=BG_INPUT,
+        ent = tk.Entry(tree2, font=(FONT_MONO, 13), fg=TEXT, bg=BG_INPUT,
                        insertbackground=ACCENT, relief="flat",
                        highlightthickness=1, highlightcolor=ACCENT,
                        highlightbackground=ACCENT)
@@ -1024,7 +1108,7 @@ def open_installment_chart_window(case_record, parent_win):
             vals[ci] = ent.get()
             # update paid/overdue/unpaid colour based on recv_date (index 2) and inst_date (index 1)
             recv      = vals[2] if ci != 2 else ent.get()
-            inst_date = vals[1] if ci != 1 else ent.get()
+            inst_date = to_display_date(vals[1]) if ci != 1 else ent.get()
             tree2.item(item, values=vals, tags=(_row_tag(0, recv, inst_date),))
             ent.destroy(); edit_entry[0] = None
             _recalc_balance()
@@ -1109,19 +1193,19 @@ def open_installment_chart_window(case_record, parent_win):
     btn_bar = tk.Frame(top, bg=BG_PANEL, pady=8, padx=16)
     btn_bar.pack(fill="x")
 
-    tk.Button(btn_bar, text="＋  Add Row  INS", font=(FONT_UI, 9, "bold"),
+    tk.Button(btn_bar, text="＋  Add Row  INS", font=(FONT_UI, 12, "bold"),
               fg=BG, bg=ACCENT_PUR, relief="flat", bd=0, padx=14, pady=6,
               cursor="hand2", command=add_row).pack(side=tk.LEFT, padx=(0, 8))
-    tk.Button(btn_bar, text="−  Delete Row  DEL", font=(FONT_UI, 9, "bold"),
+    tk.Button(btn_bar, text="−  Delete Row  DEL", font=(FONT_UI, 12, "bold"),
               fg=BG, bg=ACCENT_YEL, relief="flat", bd=0, padx=14, pady=6,
               cursor="hand2", command=del_row).pack(side=tk.LEFT, padx=(0, 8))
-    tk.Button(btn_bar, text="🔄  Recalc Balance", font=(FONT_UI, 9, "bold"),
+    tk.Button(btn_bar, text="🔄  Recalc Balance", font=(FONT_UI, 12, "bold"),
               fg=BG, bg=ACCENT, relief="flat", bd=0, padx=14, pady=6,
               cursor="hand2", command=_recalc_balance).pack(side=tk.LEFT, padx=(0, 8))
-    tk.Button(btn_bar, text="💾  SAVE  F10", font=(FONT_UI, 9, "bold"),
+    tk.Button(btn_bar, text="💾  SAVE  F10", font=(FONT_UI, 12, "bold"),
               fg=BG, bg=ACCENT2, relief="flat", bd=0, padx=14, pady=6,
               cursor="hand2", command=save_chart).pack(side=tk.LEFT, padx=(0, 8))
-    tk.Button(btn_bar, text="✕  CLOSE  ESC", font=(FONT_UI, 9, "bold"),
+    tk.Button(btn_bar, text="✕  CLOSE  ESC", font=(FONT_UI, 12, "bold"),
               fg=ACCENT_RED, bg=BG_PANEL, relief="flat", bd=0, padx=14, pady=6,
               cursor="hand2", command=top.destroy).pack(side=tk.LEFT)
 
@@ -1150,10 +1234,10 @@ def installment_window(parent):
     tk.Frame(titlebar, bg=ACCENT, width=4).pack(side=tk.LEFT, fill=tk.Y)
     ti = tk.Frame(titlebar, bg=BG_PANEL, padx=18, pady=12)
     ti.pack(side=tk.LEFT)
-    tk.Label(ti, text="NEW CASES", font=(FONT_UI, 15, "bold"),
+    tk.Label(ti, text="NEW CASES", font=(FONT_UI, 18, "bold"),
              fg=TEXT, bg=BG_PANEL).pack(anchor="w")
     tk.Label(ti, text="Installment Case Management",
-             font=(FONT_UI, 9), fg=TEXT_DIM, bg=BG_PANEL).pack(anchor="w")
+             font=(FONT_UI, 12), fg=TEXT_DIM, bg=BG_PANEL).pack(anchor="w")
     tk.Frame(win, bg=BORDER, height=1).pack(fill=tk.X)
 
     make_shortcut_bar(win, [
@@ -1169,9 +1253,9 @@ def installment_window(parent):
     # Search bar
     sf = tk.Frame(win, bg=BG, padx=16, pady=8)
     sf.pack(fill=tk.X)
-    tk.Label(sf, text="🔍", font=(FONT_UI, 11), fg=TEXT_DIM, bg=BG).pack(side=tk.LEFT)
+    tk.Label(sf, text="🔍", font=(FONT_UI, 14), fg=TEXT_DIM, bg=BG).pack(side=tk.LEFT)
     sv = tk.StringVar()
-    se = tk.Entry(sf, textvariable=sv, font=(FONT_UI, 10), fg=TEXT_DIM,
+    se = tk.Entry(sf, textvariable=sv, font=(FONT_UI, 13), fg=TEXT_DIM,
                   bg=BG_CARD, insertbackground=ACCENT, relief="flat",
                   highlightthickness=1, highlightcolor=ACCENT,
                   highlightbackground=BORDER, width=38)
@@ -1184,7 +1268,7 @@ def installment_window(parent):
             lambda e: (se.insert(0, PH), se.config(fg=TEXT_DIM)) if not se.get() else None)
 
     rec_badge = tk.Label(sf, text=f"  {len(INSTALLMENT_CASES)} records  ",
-                         font=(FONT_UI, 9, "bold"), fg=ACCENT, bg="#1b2e4a",
+                         font=(FONT_UI, 12, "bold"), fg=ACCENT, bg="#1b2e4a",
                          padx=6, pady=4)
     rec_badge.pack(side=tk.LEFT)
 
@@ -1242,10 +1326,10 @@ def installment_window(parent):
 
     gf = tk.Frame(sbar, bg=BG_PANEL)
     gf.pack(side=tk.LEFT)
-    tk.Label(gf, text="GOTO CASE ID", font=(FONT_UI, 8, "bold"),
+    tk.Label(gf, text="GOTO CASE ID", font=(FONT_UI, 11, "bold"),
              fg=TEXT_DIM, bg=BG_PANEL).pack(side=tk.LEFT)
     goto_var = tk.StringVar()
-    ge = tk.Entry(gf, textvariable=goto_var, font=(FONT_MONO, 10),
+    ge = tk.Entry(gf, textvariable=goto_var, font=(FONT_MONO, 13),
                   fg=TEXT, bg=BG_CARD, insertbackground=ACCENT, relief="flat",
                   highlightthickness=1, highlightcolor=ACCENT,
                   highlightbackground=BORDER, width=10)
@@ -1259,12 +1343,12 @@ def installment_window(parent):
         messagebox.showinfo("Not Found", f"Case ID '{t}' not found.", parent=win)
 
     ge.bind("<Return>", do_goto)
-    tk.Button(gf, text="GO", font=(FONT_UI, 8, "bold"), fg=BG, bg=ACCENT,
+    tk.Button(gf, text="GO", font=(FONT_UI, 11, "bold"), fg=BG, bg=ACCENT,
               relief="flat", bd=0, padx=10, pady=4, cursor="hand2",
               command=do_goto).pack(side=tk.LEFT, padx=6)
 
     pending_lbl = tk.Label(sbar, text=f"NO OF PENDING CASES  {len(INSTALLMENT_CASES)}",
-                           font=(FONT_UI, 9, "bold"), fg=ACCENT_YEL, bg=BG_PANEL)
+                           font=(FONT_UI, 12, "bold"), fg=ACCENT_YEL, bg=BG_PANEL)
     pending_lbl.pack(side=tk.LEFT, padx=30)
 
     tots = tk.Frame(sbar, bg=BG_PANEL)
@@ -1273,8 +1357,8 @@ def installment_window(parent):
                              ("Balance Total", f"₹ {tb_:,.2f}", ACCENT_RED)]:
         tf2 = tk.Frame(tots, bg=BG_CARD, padx=12, pady=4)
         tf2.pack(side=tk.LEFT, padx=4)
-        tk.Label(tf2, text=lbl, font=(FONT_UI, 7, "bold"), fg=TEXT_DIM, bg=BG_CARD).pack(anchor="w")
-        tk.Label(tf2, text=val, font=(FONT_MONO, 11, "bold"), fg=color, bg=BG_CARD).pack(anchor="w")
+        tk.Label(tf2, text=lbl, font=(FONT_UI, 10, "bold"), fg=TEXT_DIM, bg=BG_CARD).pack(anchor="w")
+        tk.Label(tf2, text=val, font=(FONT_MONO, 14, "bold"), fg=color, bg=BG_CARD).pack(anchor="w")
 
     # ── Actions ───────────────────────────────────────────────────────────
     def refresh():
@@ -1374,13 +1458,13 @@ def show_table(parent, title, data, subtitle=""):
     topbar.pack(fill=tk.X)
     tb2 = tk.Frame(topbar, bg=BG_PANEL)
     tb2.pack(side=tk.LEFT)
-    tk.Label(tb2, text=title, font=(FONT_UI, 16, "bold"), fg=TEXT, bg=BG_PANEL).pack(anchor="w")
+    tk.Label(tb2, text=title, font=(FONT_UI, 19, "bold"), fg=TEXT, bg=BG_PANEL).pack(anchor="w")
     if subtitle:
-        tk.Label(tb2, text=subtitle, font=(FONT_UI, 9), fg=TEXT_DIM, bg=BG_PANEL).pack(anchor="w")
-    badge2 = tk.Label(topbar, text=f"  {len(data)}  ", font=(FONT_UI, 9, "bold"),
+        tk.Label(tb2, text=subtitle, font=(FONT_UI, 12), fg=TEXT_DIM, bg=BG_PANEL).pack(anchor="w")
+    badge2 = tk.Label(topbar, text=f"  {len(data)}  ", font=(FONT_UI, 12, "bold"),
                       fg=ACCENT, bg="#1b2e4a", padx=6, pady=4)
     badge2.pack(side=tk.LEFT, padx=16)
-    tk.Button(topbar, text="✕  Close", command=win.destroy, font=(FONT_UI, 9),
+    tk.Button(topbar, text="✕  Close", command=win.destroy, font=(FONT_UI, 12),
               fg=TEXT_DIM, bg=BG_PANEL, activeforeground=ACCENT_RED,
               activebackground=BG_PANEL, relief="flat", bd=0,
               cursor="hand2", padx=12).pack(side=tk.RIGHT)
@@ -1390,9 +1474,9 @@ def show_table(parent, title, data, subtitle=""):
 
     sf2 = tk.Frame(right, bg=BG, padx=16, pady=8)
     sf2.pack(fill=tk.X)
-    tk.Label(sf2, text="🔍", font=(FONT_UI, 11), fg=TEXT_DIM, bg=BG).pack(side=tk.LEFT)
+    tk.Label(sf2, text="🔍", font=(FONT_UI, 14), fg=TEXT_DIM, bg=BG).pack(side=tk.LEFT)
     sv2 = tk.StringVar()
-    se2 = tk.Entry(sf2, textvariable=sv2, font=(FONT_UI, 10), fg=TEXT_DIM,
+    se2 = tk.Entry(sf2, textvariable=sv2, font=(FONT_UI, 13), fg=TEXT_DIM,
                    bg=BG_CARD, insertbackground=ACCENT, relief="flat",
                    highlightthickness=1, highlightcolor=ACCENT,
                    highlightbackground=BORDER, width=36)
@@ -1437,7 +1521,7 @@ def show_table(parent, title, data, subtitle=""):
     sb2 = tk.Frame(right, bg=BG_PANEL, pady=6, padx=16)
     sb2.pack(fill=tk.X)
     tk.Label(sb2, text=f"Sandhu Enterprises  ·  {title}",
-             font=(FONT_UI, 9), fg=TEXT_DIM, bg=BG_PANEL).pack(side=tk.LEFT)
+             font=(FONT_UI, 12), fg=TEXT_DIM, bg=BG_PANEL).pack(side=tk.LEFT)
 
     def do_s2(*_):
         q = sv2.get().lower().strip()
@@ -1466,9 +1550,9 @@ def overview_window(parent):
 
     topbar = tk.Frame(right, bg=BG_PANEL, pady=14, padx=20)
     topbar.pack(fill=tk.X)
-    tk.Label(topbar, text="Dashboard Overview", font=(FONT_UI, 16, "bold"),
+    tk.Label(topbar, text="Dashboard Overview", font=(FONT_UI, 19, "bold"),
              fg=TEXT, bg=BG_PANEL).pack(side=tk.LEFT)
-    tk.Button(topbar, text="✕  Close", command=win.destroy, font=(FONT_UI, 9),
+    tk.Button(topbar, text="✕  Close", command=win.destroy, font=(FONT_UI, 12),
               fg=TEXT_DIM, bg=BG_PANEL, activeforeground=ACCENT_RED,
               activebackground=BG_PANEL, relief="flat", bd=0,
               cursor="hand2", padx=12).pack(side=tk.RIGHT)
@@ -1491,12 +1575,12 @@ def overview_window(parent):
         grid2.grid_columnconfigure(i, weight=1)
         inn = tk.Frame(card2, bg=BG_CARD, padx=22, pady=20)
         inn.pack(fill=tk.BOTH, expand=True)
-        tk.Label(inn, text=icon, font=(FONT_UI, 20), fg=color, bg=BG_CARD).pack(anchor="w")
-        tk.Label(inn, text=value, font=(FONT_UI, 24, "bold"), fg=TEXT, bg=BG_CARD).pack(anchor="w", pady=(6, 2))
-        tk.Label(inn, text=label, font=(FONT_UI, 9), fg=TEXT_DIM, bg=BG_CARD).pack(anchor="w")
+        tk.Label(inn, text=icon, font=(FONT_UI, 23), fg=color, bg=BG_CARD).pack(anchor="w")
+        tk.Label(inn, text=value, font=(FONT_UI, 27, "bold"), fg=TEXT, bg=BG_CARD).pack(anchor="w", pady=(6, 2))
+        tk.Label(inn, text=label, font=(FONT_UI, 12), fg=TEXT_DIM, bg=BG_CARD).pack(anchor="w")
         tk.Frame(card2, bg=color, height=3).pack(fill=tk.X, side=tk.BOTTOM)
 
-    tk.Label(body, text="System Details", font=(FONT_UI, 12, "bold"),
+    tk.Label(body, text="System Details", font=(FONT_UI, 15, "bold"),
              fg=TEXT, bg=BG).pack(anchor="w", pady=(0, 10))
     ic2 = tk.Frame(body, bg=BG_CARD, highlightbackground=BORDER,
                    highlightthickness=1, padx=24, pady=16)
@@ -1509,9 +1593,9 @@ def overview_window(parent):
         ("Credit Cases", str(OVERVIEW['credit_active'])),
         ("Villages",     str(OVERVIEW['villages'])),
     ]):
-        tk.Label(ic2, text=k, font=(FONT_UI, 9, "bold"), fg=TEXT_DIM,
+        tk.Label(ic2, text=k, font=(FONT_UI, 12, "bold"), fg=TEXT_DIM,
                  bg=BG_CARD, width=16, anchor="w").grid(row=r, column=0, pady=5, sticky="w")
-        tk.Label(ic2, text=v, font=(FONT_UI, 10), fg=TEXT,
+        tk.Label(ic2, text=v, font=(FONT_UI, 13), fg=TEXT,
                  bg=BG_CARD, anchor="w").grid(row=r, column=1, padx=20, pady=5, sticky="w")
     win.bind("<Escape>", lambda e: win.destroy())
 
@@ -1546,16 +1630,16 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
     tb_inner.pack(side=tk.LEFT)
     tk.Label(tb_inner,
              text="EDIT CASE DETAILS" if editing else "NEW CASE DETAILS",
-             font=(FONT_UI, 15, "bold"), fg=TEXT, bg=BG_PANEL).pack(anchor="w")
+             font=(FONT_UI, 18, "bold"), fg=TEXT, bg=BG_PANEL).pack(anchor="w")
     tk.Label(tb_inner, text="Complete all sections · Press F10 to save",
-             font=(FONT_UI, 9), fg=TEXT_DIM, bg=BG_PANEL).pack(anchor="w")
+             font=(FONT_UI, 12), fg=TEXT_DIM, bg=BG_PANEL).pack(anchor="w")
 
     badge_f = tk.Frame(topbar, bg=BG_PANEL, padx=20)
     badge_f.pack(side=tk.RIGHT)
-    tk.Label(badge_f, text="CASE ID", font=(FONT_UI, 8),
+    tk.Label(badge_f, text="CASE ID", font=(FONT_UI, 11),
              fg=TEXT_DIM, bg=BG_PANEL).pack()
     tk.Label(badge_f, text=str(next_id),
-             font=(FONT_MONO, 22, "bold"), fg=ACCENT_RED, bg=BG_PANEL).pack()
+             font=(FONT_MONO, 25, "bold"), fg=ACCENT_RED, bg=BG_PANEL).pack()
 
     tk.Frame(win, bg=BORDER, height=1).pack(fill=tk.X)
     make_shortcut_bar(win, [
@@ -1584,15 +1668,15 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
     # ══════════════════════════════════════════════════════════════════════
     left_col = tk.Frame(outer, bg=BG)
     left_col.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
-    left_col.grid_rowconfigure(0, weight=0)
-    left_col.grid_rowconfigure(1, weight=1)
+    left_col.grid_rowconfigure(0, weight=2)
+    left_col.grid_rowconfigure(1, weight=3)
     left_col.grid_columnconfigure(0, weight=1)
 
     # ── Customer card ─────────────────────────────────────────────────────
     cust_card = tk.Frame(left_col, bg=BG_CARD,
                          highlightbackground=BORDER, highlightthickness=1,
                          padx=16, pady=12)
-    cust_card.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+    cust_card.grid(row=0, column=0, sticky="nsew", pady=(0, 10))
     section_header(cust_card, "CUSTOMER DETAILS", ACCENT_RED)
 
     cg = tk.Frame(cust_card, bg=BG_CARD)
@@ -1601,17 +1685,17 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
     cg.grid_columnconfigure(3, weight=1)
 
     # FILE NO + DATE on same row
-    tk.Label(cg, text="FILE NO", font=(FONT_UI, 10), fg=TEXT_DIM,
+    tk.Label(cg, text="FILE NO", font=(FONT_UI, 13), fg=TEXT_DIM,
              bg=BG_CARD).grid(row=0, column=0, sticky="w", pady=5, padx=4)
     e_fn = make_entry(cg, width=10)
     e_fn.insert(0, d.get('file_no', ''))
     e_fn.grid(row=0, column=1, sticky="ew", ipady=7, pady=5, padx=(0, 12))
     entries['file_no'] = e_fn
 
-    tk.Label(cg, text="DATE", font=(FONT_UI, 10), fg=TEXT_DIM,
+    tk.Label(cg, text="DATE", font=(FONT_UI, 13), fg=TEXT_DIM,
              bg=BG_CARD).grid(row=0, column=2, sticky="w", pady=5, padx=4)
     e_dt = make_entry(cg, width=13)
-    e_dt.insert(0, d.get('date', 'DD/MM/YYYY'))
+    e_dt.insert(0, to_display_date(d.get('date')) or datetime.today().strftime("%d/%m/%Y"))
     e_dt.config(fg=TEXT if d.get('date') else TEXT_DIM)
     e_dt.grid(row=0, column=3, sticky="ew", ipady=7, pady=5)
     entries['date'] = e_dt
@@ -1619,7 +1703,7 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
               lambda e: (e_dt.delete(0, tk.END), e_dt.config(fg=TEXT))
                         if e_dt.get() == "DD/MM/YYYY" else None)
     e_dt.bind("<FocusOut>",
-              lambda e: (e_dt.insert(0, "DD/MM/YYYY"), e_dt.config(fg=TEXT_DIM))
+              lambda e: (e_dt.insert(0, datetime.today().strftime("%d/%m/%Y")), e_dt.config(fg=TEXT_DIM))
                         if not e_dt.get() else None)
 
     for i, (lbl, key) in enumerate([
@@ -1630,7 +1714,7 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
         ("MOBILE NO",   "mobile_no"),
         ("REMARKS",     "remarks"),
     ], start=1):
-        tk.Label(cg, text=lbl, font=(FONT_UI, 10), fg=TEXT_DIM,
+        tk.Label(cg, text=lbl, font=(FONT_UI, 13), fg=TEXT_DIM,
                  bg=BG_CARD, width=12, anchor="w").grid(
                  row=i, column=0, sticky="w", pady=4, padx=4)
         if lbl == "VILLAGE":
@@ -1638,7 +1722,7 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
             entries['village'] = village_var
             village_vals = db.get_villages()
             ttk.Combobox(cg, textvariable=village_var, values=village_vals,
-                         style="Dark.TCombobox", font=(FONT_UI, 10), width=26
+                         style="Dark.TCombobox", font=(FONT_UI, 13), width=26
                          ).grid(row=i, column=1, columnspan=3, sticky="ew",
                                 ipady=5, pady=4, padx=(0, 4))
         else:
@@ -1667,7 +1751,7 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
         ("MOBILE NO",   "g1_mobile"),
         ("REMARKS",     "g1_remarks"),
     ]):
-        tk.Label(gg, text=lbl, font=(FONT_UI, 10), fg=TEXT_DIM,
+        tk.Label(gg, text=lbl, font=(FONT_UI, 13), fg=TEXT_DIM,
                  bg=BG_CARD, width=12, anchor="w").grid(
                  row=i, column=0, sticky="w", pady=5, padx=4)
         e = make_entry(gg, width=26)
@@ -1692,7 +1776,7 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
 
     # item_card has fields on the left and photo on the right
     item_inner = tk.Frame(item_card, bg=BG_CARD)
-    item_inner.pack(fill=tk.X)
+    item_inner.pack(fill=tk.BOTH, expand=True)
     item_inner.grid_columnconfigure(0, weight=1)
     item_inner.grid_columnconfigure(1, weight=0)
 
@@ -1701,13 +1785,13 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
     ig.grid_columnconfigure(1, weight=1)
 
     def money_entry(parent, var, row, label, editable=True, color=ACCENT_RED):
-        tk.Label(parent, text=label, font=(FONT_UI, 10), fg=TEXT_DIM,
+        tk.Label(parent, text=label, font=(FONT_UI, 13), fg=TEXT_DIM,
                  bg=BG_CARD, width=16, anchor="w").grid(
                  row=row, column=0, sticky="w", pady=6, padx=4)
         state = "normal" if editable else "readonly"
         rbg   = BG_INPUT if editable else BG_CARD
         e = tk.Entry(parent, textvariable=var, state=state,
-                     font=(FONT_MONO, 11, "bold"), fg=color,
+                     font=(FONT_MONO, 14, "bold"), fg=color,
                      bg=rbg, readonlybackground=rbg,
                      insertbackground=ACCENT, relief="flat",
                      highlightthickness=1, highlightcolor=ACCENT,
@@ -1719,16 +1803,16 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
     receipt_var = tk.StringVar(value=d.get('total_receipt', '0.00'))
     balance_var = tk.StringVar(value=d.get('balance', '0.00'))
 
-    money_entry(ig, amount_var,  0, "AMOUNT",         editable=True)
+    money_entry(ig, amount_var,  0, "AMOUNT",         editable=False, color=ACCENT_YEL)
     money_entry(ig, receipt_var, 1, "TOTAL RECEIPT",  editable=False)
     money_entry(ig, balance_var, 2, "BALANCE AMOUNT", editable=False)
     entries['amount'] = amount_var
 
     # NEXT DUE DATE — highlighted
-    tk.Label(ig, text="NEXT DUE DATE", font=(FONT_UI, 10, "bold"), fg=ACCENT_PUR,
+    tk.Label(ig, text="NEXT DUE DATE", font=(FONT_UI, 13, "bold"), fg=ACCENT_PUR,
              bg=BG_CARD, width=16, anchor="w").grid(row=3, column=0, sticky="w", pady=6, padx=4)
     e_due = make_entry(ig, width=20)
-    e_due.insert(0, d.get('next_due_date', ''))
+    e_due.insert(0, to_display_date(d.get('next_due_date')) or datetime.today().strftime("%d/%m/%Y"))
     e_due.grid(row=3, column=1, sticky="ew", ipady=7, pady=6, padx=(0, 8))
     entries['next_due_date'] = e_due
 
@@ -1749,7 +1833,7 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
         ph_canvas.create_line(2, 2, w-2, h-2, fill=BORDER)
         ph_canvas.create_line(w-2, 2, 2, h-2, fill=BORDER)
         ph_canvas.create_text(w//2, h//2, text="No Photo",
-                              fill=TEXT_DIM, font=(FONT_UI, 10))
+                              fill=TEXT_DIM, font=(FONT_UI, 13))
     ph_canvas.bind("<Configure>", draw_x)
     ph_canvas.after(150, draw_x)
 
@@ -1787,13 +1871,12 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
     sale_tree.tag_configure("even", background=BG_CARD)
     sale_tree.tag_configure("odd",  background=BG_ROW_ALT)
 
-    # Pre-fill rows from existing data or auto-create first entry for new case
+    # Pre-fill rows from existing data; new cases start with an empty table
     import datetime as _dt
     if editing:
         existing_rows = d.get('payment_rows', [("", "", "", "")])
     else:
-        today_str = _dt.date.today().strftime("%d/%m/%Y")
-        existing_rows = [("Total Amount", today_str, amount_var.get() or "", "")]
+        existing_rows = []
     for i, row in enumerate(existing_rows):
         sale_tree.insert("", "end", values=row,
                          tags=("even" if i % 2 == 0 else "odd",))
@@ -1811,14 +1894,14 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
     footer.grid_columnconfigure(2, weight=2)
     footer.grid_columnconfigure(3, weight=2)
 
-    tk.Label(footer, text="TOTAL", font=(FONT_UI, 9, "bold"),
+    tk.Label(footer, text="TOTAL", font=(FONT_UI, 12, "bold"),
              fg=TEXT_DIM, bg=BG_CARD, anchor="e").grid(row=0, column=1, sticky="e", padx=4)
     sale_total_lbl = tk.Label(footer, text="0.00",
-                               font=(FONT_MONO, 11, "bold"), fg=ACCENT2,
+                               font=(FONT_MONO, 14, "bold"), fg=ACCENT2,
                                bg=BG_CARD, anchor="center")
     sale_total_lbl.grid(row=0, column=2, sticky="ew", padx=4)
     receipt_total_lbl = tk.Label(footer, text="0.00",
-                                  font=(FONT_MONO, 11, "bold"), fg=ACCENT_RED,
+                                  font=(FONT_MONO, 14, "bold"), fg=ACCENT_RED,
                                   bg=BG_CARD, anchor="center")
     receipt_total_lbl.grid(row=0, column=3, sticky="ew", padx=4)
 
@@ -1884,7 +1967,7 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
         x, y, width, height = bbox
         value = sale_tree.item(item, "values")[col_index]
 
-        entry = tk.Entry(sale_tree, font=(FONT_UI, 10),
+        entry = tk.Entry(sale_tree, font=(FONT_UI, 13),
                         justify="center" if col_index != 0 else "left")
         entry.place(x=x, y=y, width=width, height=height)
         entry.insert(0, value)
@@ -1918,7 +2001,7 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
         bx, by, bw, bh = bbox
         ci = int(col.replace("#", "")) - 1
         cur = sale_tree.item(row, "values")[ci]
-        ent = tk.Entry(sale_tree, font=(FONT_UI, 10), fg=TEXT, bg=BG_INPUT,
+        ent = tk.Entry(sale_tree, font=(FONT_UI, 13), fg=TEXT, bg=BG_INPUT,
                        insertbackground=ACCENT, relief="flat",
                        highlightthickness=1, highlightcolor=ACCENT,
                        highlightbackground=ACCENT)
@@ -1953,26 +2036,10 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
             except: pass
         sale_total_lbl.config(text=f"{sale_tot:,.2f}")
         receipt_total_lbl.config(text=f"{rec_tot:,.2f}")
+        # AMOUNT is driven by the sum of the SALE AMOUNT column
+        amount_var.set(f"{sale_tot:.2f}")
         receipt_var.set(f"{rec_tot:.2f}")
-        try:
-            amt = float(str(amount_var.get()).replace(',', '') or 0)
-            balance_var.set(f"{amt - rec_tot:.2f}")
-        except:
-            balance_var.set("0.00")
-
-    def _on_amount_change(*_):
-        recalc_totals()
-        # For new cases, keep the first row's sale amount in sync with AMOUNT field
-        if not editing:
-            children = sale_tree.get_children()
-            if children:
-                first = children[0]
-                vals = list(sale_tree.item(first, "values"))
-                vals[2] = amount_var.get() or ""
-                sale_tree.item(first, values=vals)
-                recalc_totals()
-
-    amount_var.trace_add("write", _on_amount_change)
+        balance_var.set(f"{sale_tot - rec_tot:.2f}")
 
     def add_row(e=None):
         n = len(sale_tree.get_children())
@@ -1989,10 +2056,10 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
 
     btn_row = tk.Frame(tbl_inner, bg=BG_CARD)
     btn_row.grid(row=2, column=0, sticky="ew", pady=(4, 0))
-    tk.Button(btn_row, text="＋  Add Row  INS", font=(FONT_UI, 9, "bold"),
+    tk.Button(btn_row, text="＋  Add Row  INS", font=(FONT_UI, 12, "bold"),
               fg=BG, bg=ACCENT_PUR, relief="flat", bd=0, padx=12, pady=5,
               cursor="hand2", command=add_row).pack(side=tk.LEFT, padx=(0, 8))
-    tk.Button(btn_row, text="−  Delete Row  DEL", font=(FONT_UI, 9, "bold"),
+    tk.Button(btn_row, text="−  Delete Row  DEL", font=(FONT_UI, 12, "bold"),
               fg=BG, bg=ACCENT_YEL, relief="flat", bd=0, padx=12, pady=5,
               cursor="hand2", command=del_row).pack(side=tk.LEFT)
 
@@ -2025,7 +2092,7 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
         record = {
             'id':             next_id if editing else None,
             'file_no':        file_no,
-            'date':           get('date'),
+            'date':           to_mysql_date(get('date')),
             'customer':       get('customer'),
             'relation':       get('relation'),
             'address':        get('address'),
@@ -2036,7 +2103,7 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
             'finance_amt':    get('amount'),
             'total_receipt':  receipt_var.get(),
             'balance':        balance_var.get(),
-            'next_due_date':  get('next_due_date'),
+            'next_due_date':  to_mysql_date(get('next_due_date')),
             'g1_name':        get('g1_name'),
             'g1_relation':    get('g1_relation'),
             'g1_address':     get('g1_address'),
@@ -2060,7 +2127,7 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
 
     tk.Button(action_bar, text="✕  CANCEL  ESC",
               command=win.destroy,
-              font=(FONT_UI, 11, "bold"), fg=ACCENT_RED, bg=BG_CARD,
+              font=(FONT_UI, 14, "bold"), fg=ACCENT_RED, bg=BG_CARD,
               activeforeground=ACCENT_RED, activebackground=BG_PANEL,
               relief="flat", bd=0, cursor="hand2", padx=20, pady=10,
               highlightthickness=1, highlightbackground=ACCENT_RED
@@ -2068,7 +2135,7 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
 
     tk.Button(action_bar, text="💾  SAVE & EXIT  F10",
               command=save_and_exit,
-              font=(FONT_UI, 11, "bold"), fg=BG, bg=ACCENT2,
+              font=(FONT_UI, 14, "bold"), fg=BG, bg=ACCENT2,
               activeforeground=BG, activebackground="#2ebd68",
               relief="flat", bd=0, cursor="hand2", padx=24, pady=10,
               ).pack(side=tk.LEFT)
@@ -2093,10 +2160,10 @@ def credit_cases_window(parent):
     tk.Frame(titlebar, bg=ACCENT_RED, width=4).pack(side=tk.LEFT, fill=tk.Y)
     ti = tk.Frame(titlebar, bg=BG_PANEL, padx=18, pady=12)
     ti.pack(side=tk.LEFT)
-    tk.Label(ti, text="CREDIT CASES", font=(FONT_UI, 15, "bold"),
+    tk.Label(ti, text="CREDIT CASES", font=(FONT_UI, 18, "bold"),
              fg=TEXT, bg=BG_PANEL).pack(anchor="w")
     tk.Label(ti, text="Credit Case Management",
-             font=(FONT_UI, 9), fg=TEXT_DIM, bg=BG_PANEL).pack(anchor="w")
+             font=(FONT_UI, 12), fg=TEXT_DIM, bg=BG_PANEL).pack(anchor="w")
     tk.Frame(win, bg=BORDER, height=1).pack(fill=tk.X)
 
     make_shortcut_bar(win, [
@@ -2111,9 +2178,9 @@ def credit_cases_window(parent):
     # Search bar
     sf = tk.Frame(win, bg=BG, padx=16, pady=8)
     sf.pack(fill=tk.X)
-    tk.Label(sf, text="🔍", font=(FONT_UI, 11), fg=TEXT_DIM, bg=BG).pack(side=tk.LEFT)
+    tk.Label(sf, text="🔍", font=(FONT_UI, 14), fg=TEXT_DIM, bg=BG).pack(side=tk.LEFT)
     sv = tk.StringVar()
-    se = tk.Entry(sf, textvariable=sv, font=(FONT_UI, 10), fg=TEXT_DIM,
+    se = tk.Entry(sf, textvariable=sv, font=(FONT_UI, 13), fg=TEXT_DIM,
                   bg=BG_CARD, insertbackground=ACCENT, relief="flat",
                   highlightthickness=1, highlightcolor=ACCENT,
                   highlightbackground=BORDER, width=38)
@@ -2126,9 +2193,38 @@ def credit_cases_window(parent):
             lambda e: (se.insert(0, PH), se.config(fg=TEXT_DIM)) if not se.get() else None)
 
     rec_badge = tk.Label(sf, text=f"  {len(CREDIT_CASES)} records  ",
-                         font=(FONT_UI, 9, "bold"), fg=ACCENT, bg="#1b2e4a",
+                         font=(FONT_UI, 12, "bold"), fg=ACCENT, bg="#1b2e4a",
                          padx=6, pady=4)
     rec_badge.pack(side=tk.LEFT)
+
+    # Credit-specific columns (includes Fine on overdue balance)
+    CR_COLS   = ['file_no', 'date', 'customer_display', 'village', 'mobile_no',
+                 'finance_amt', 'balance', 'next_due_date', 'fine_overdue', 'id']
+    CR_HEADS  = ['File No', 'Date', 'Customer (Father)', 'Village', 'Mobile No',
+                 'Finance Amt', 'Balance', '\u26a0 Next Due Date', '\u26a0 Fine if Overdue', 'ID']
+    CR_WIDTHS = [70, 95, 200, 120, 140, 105, 100, 120, 145, 50]
+
+    # Fine rate: 2% per month on outstanding balance
+    FINE_RATE_PER_DAY = 0.02 / 30
+
+    def _calc_fine(r):
+        """Return fine string if next_due_date is in the past and balance > 0."""
+        try:
+            due_raw = r.get('next_due_date') or ''
+            if not due_raw:
+                return ''
+            due_dt = datetime.strptime(str(due_raw).strip(), "%Y-%m-%d").date()
+            today  = datetime.today().date()
+            if today <= due_dt:
+                return ''
+            overdue_days = (today - due_dt).days
+            balance = float(str(r.get('balance', 0) or 0).replace(',', ''))
+            if balance <= 0:
+                return ''
+            fine = balance * FINE_RATE_PER_DAY * overdue_days
+            return f"\u20b9 {fine:,.2f}  ({overdue_days}d)"
+        except Exception:
+            return ''
 
     # Table
     to = tk.Frame(win, bg=BG, padx=20)
@@ -2136,18 +2232,24 @@ def credit_cases_window(parent):
     tb = tk.Frame(to, bg=BORDER, bd=1)
     tb.pack(fill=tk.BOTH, expand=True)
 
-    tree = ttk.Treeview(tb, columns=INST_COLS, show="headings", style="T.Treeview")
-    for col, head, width in zip(INST_COLS, INST_HEADS, INST_WIDTHS):
+    tree = ttk.Treeview(tb, columns=CR_COLS, show="headings", style="T.Treeview")
+    for col, head, width in zip(CR_COLS, CR_HEADS, CR_WIDTHS):
         tree.heading(col, text=head)
-        tree.column(col, width=width, minwidth=50, anchor="w")
-    tree.tag_configure("even", background=BG_CARD)
-    tree.tag_configure("odd",  background=BG_ROW_ALT)
+        anchor = "center" if col in ('finance_amt', 'balance', 'fine_overdue') else "w"
+        tree.column(col, width=width, minwidth=50, anchor=anchor)
+    tree.tag_configure("even",    background=BG_CARD)
+    tree.tag_configure("odd",     background=BG_ROW_ALT)
+    tree.tag_configure("overdue", background="#fff0f0", foreground="#b91c1c")
 
     def _credit_row(r):
         row = []
-        for c in INST_COLS:
+        for c in CR_COLS:
             if c == 'customer_display':
                 row.append(fmt_customer(r.get('customer', ''), r.get('relation', '')))
+            elif c == 'next_due_date':
+                row.append(to_display_date(r.get('next_due_date', '')))
+            elif c == 'fine_overdue':
+                row.append(_calc_fine(r))
             else:
                 row.append(r.get(c, ''))
         return tuple(row)
@@ -2157,8 +2259,13 @@ def credit_cases_window(parent):
     def populate(rows):
         for item in tree.get_children(): tree.delete(item)
         for i, vals in enumerate(rows):
-            tree.insert("", tk.END, values=vals,
-                        tags=("even" if i % 2 == 0 else "odd",))
+            # vals[-2] is fine_overdue column; highlight red if overdue
+            fine_val = vals[-2] if len(vals) > 2 else ""
+            if fine_val and str(fine_val).strip():
+                tag = "overdue"
+            else:
+                tag = "even" if i % 2 == 0 else "odd"
+            tree.insert("", tk.END, values=vals, tags=(tag,))
         rec_badge.config(text=f"  {len(rows)} records  ")
 
     populate(all_data)
@@ -2181,10 +2288,10 @@ def credit_cases_window(parent):
 
     gf = tk.Frame(sbar, bg=BG_PANEL)
     gf.pack(side=tk.LEFT)
-    tk.Label(gf, text="GOTO CASE ID", font=(FONT_UI, 8, "bold"),
+    tk.Label(gf, text="GOTO CASE ID", font=(FONT_UI, 11, "bold"),
              fg=TEXT_DIM, bg=BG_PANEL).pack(side=tk.LEFT)
     goto_var = tk.StringVar()
-    ge = tk.Entry(gf, textvariable=goto_var, font=(FONT_MONO, 10),
+    ge = tk.Entry(gf, textvariable=goto_var, font=(FONT_MONO, 13),
                   fg=TEXT, bg=BG_CARD, insertbackground=ACCENT, relief="flat",
                   highlightthickness=1, highlightcolor=ACCENT,
                   highlightbackground=BORDER, width=10)
@@ -2198,12 +2305,12 @@ def credit_cases_window(parent):
         messagebox.showinfo("Not Found", f"Case ID '{t}' not found.", parent=win)
 
     ge.bind("<Return>", do_goto)
-    tk.Button(gf, text="GO", font=(FONT_UI, 8, "bold"), fg=BG, bg=ACCENT,
+    tk.Button(gf, text="GO", font=(FONT_UI, 11, "bold"), fg=BG, bg=ACCENT,
               relief="flat", bd=0, padx=10, pady=4, cursor="hand2",
               command=do_goto).pack(side=tk.LEFT, padx=6)
 
     pending_lbl = tk.Label(sbar, text=f"NO OF PENDING CASES  {len(CREDIT_CASES)}",
-                           font=(FONT_UI, 9, "bold"), fg=ACCENT_YEL, bg=BG_PANEL)
+                           font=(FONT_UI, 12, "bold"), fg=ACCENT_YEL, bg=BG_PANEL)
     pending_lbl.pack(side=tk.LEFT, padx=30)
 
     tots = tk.Frame(sbar, bg=BG_PANEL)
@@ -2212,8 +2319,8 @@ def credit_cases_window(parent):
                              ("Balance Total", f"₹ {tb_:,.2f}", ACCENT_RED)]:
         tf2 = tk.Frame(tots, bg=BG_CARD, padx=12, pady=4)
         tf2.pack(side=tk.LEFT, padx=4)
-        tk.Label(tf2, text=lbl, font=(FONT_UI, 7, "bold"), fg=TEXT_DIM, bg=BG_CARD).pack(anchor="w")
-        tk.Label(tf2, text=val, font=(FONT_MONO, 11, "bold"), fg=color, bg=BG_CARD).pack(anchor="w")
+        tk.Label(tf2, text=lbl, font=(FONT_UI, 10, "bold"), fg=TEXT_DIM, bg=BG_CARD).pack(anchor="w")
+        tk.Label(tf2, text=val, font=(FONT_MONO, 14, "bold"), fg=color, bg=BG_CARD).pack(anchor="w")
 
     # ── Actions ───────────────────────────────────────────────────────────
     def refresh():
@@ -2282,10 +2389,10 @@ def due_report_window(parent):
     topbar = tk.Frame(right, bg=BG_PANEL, pady=14, padx=20)
     topbar.pack(fill=tk.X)
     tk.Label(topbar, text="DUE REPORT — CREDIT CASES",
-             font=(FONT_UI, 16, "bold"), fg=TEXT, bg=BG_PANEL).pack(side=tk.LEFT)
+             font=(FONT_UI, 19, "bold"), fg=TEXT, bg=BG_PANEL).pack(side=tk.LEFT)
     tk.Label(topbar, text="  Credit cases with outstanding balance",
-             font=(FONT_UI, 9), fg=TEXT_DIM, bg=BG_PANEL).pack(side=tk.LEFT)
-    tk.Button(topbar, text="✕  Close", command=win.destroy, font=(FONT_UI, 9),
+             font=(FONT_UI, 12), fg=TEXT_DIM, bg=BG_PANEL).pack(side=tk.LEFT)
+    tk.Button(topbar, text="✕  Close", command=win.destroy, font=(FONT_UI, 12),
               fg=TEXT_DIM, bg=BG_PANEL, activeforeground=ACCENT_RED,
               activebackground=BG_PANEL, relief="flat", bd=0,
               cursor="hand2", padx=12).pack(side=tk.RIGHT)
@@ -2300,9 +2407,9 @@ def due_report_window(parent):
 
     sf = tk.Frame(right, bg=BG, padx=16, pady=8)
     sf.pack(fill=tk.X)
-    tk.Label(sf, text="🔍", font=(FONT_UI, 11), fg=TEXT_DIM, bg=BG).pack(side=tk.LEFT)
+    tk.Label(sf, text="🔍", font=(FONT_UI, 14), fg=TEXT_DIM, bg=BG).pack(side=tk.LEFT)
     sv = tk.StringVar()
-    se = tk.Entry(sf, textvariable=sv, font=(FONT_UI, 10), fg=TEXT_DIM,
+    se = tk.Entry(sf, textvariable=sv, font=(FONT_UI, 13), fg=TEXT_DIM,
                   bg=BG_CARD, insertbackground=ACCENT, relief="flat",
                   highlightthickness=1, highlightcolor=ACCENT,
                   highlightbackground=BORDER, width=38)
@@ -2312,7 +2419,7 @@ def due_report_window(parent):
     se.bind("<FocusIn>",  lambda e: (se.delete(0, tk.END), se.config(fg=TEXT)) if se.get() == PH else None)
     se.bind("<FocusOut>", lambda e: (se.insert(0, PH), se.config(fg=TEXT_DIM)) if not se.get() else None)
 
-    rec_badge = tk.Label(sf, text="  0 records  ", font=(FONT_UI, 9, "bold"),
+    rec_badge = tk.Label(sf, text="  0 records  ", font=(FONT_UI, 12, "bold"),
                          fg=ACCENT, bg="#1b2e4a", padx=6, pady=4)
     rec_badge.pack(side=tk.LEFT)
 
@@ -2381,15 +2488,15 @@ def due_report_window(parent):
     sbar = tk.Frame(right, bg=BG_PANEL, pady=7, padx=16)
     sbar.pack(fill=tk.X)
     tk.Label(sbar, text="Due Report  ·  Credit cases overdue (next due date passed, balance > 0)",
-             font=(FONT_UI, 9), fg=TEXT_DIM, bg=BG_PANEL).pack(side=tk.LEFT)
+             font=(FONT_UI, 12), fg=TEXT_DIM, bg=BG_PANEL).pack(side=tk.LEFT)
     bf = tk.Frame(sbar, bg=BG_CARD, padx=12, pady=4)
     bf.pack(side=tk.RIGHT, padx=4)
-    tk.Label(bf, text="Total Balance Due", font=(FONT_UI, 7, "bold"), fg=TEXT_DIM, bg=BG_CARD).pack(anchor="w")
+    tk.Label(bf, text="Total Balance Due", font=(FONT_UI, 10, "bold"), fg=TEXT_DIM, bg=BG_CARD).pack(anchor="w")
     try:
         tb_ = sum(float(r[6] or 0) for r in all_rows)
     except Exception:
         tb_ = 0
-    bal_lbl = tk.Label(bf, text=f"₹ {tb_:,.2f}", font=(FONT_MONO, 11, "bold"), fg=ACCENT_RED, bg=BG_CARD)
+    bal_lbl = tk.Label(bf, text=f"₹ {tb_:,.2f}", font=(FONT_MONO, 14, "bold"), fg=ACCENT_RED, bg=BG_CARD)
     bal_lbl.pack(anchor="w")
 
     # ── Open credit case detail ────────────────────────────────────────────
@@ -2431,18 +2538,18 @@ def due_payments_window(parent):
     topbar = tk.Frame(right, bg=BG_PANEL, pady=14, padx=20)
     topbar.pack(fill=tk.X)
     tk.Label(topbar, text="DUE PAYMENTS — INSTALLMENT CASES",
-             font=(FONT_UI, 16, "bold"), fg=TEXT, bg=BG_PANEL).pack(side=tk.LEFT)
+             font=(FONT_UI, 19, "bold"), fg=TEXT, bg=BG_PANEL).pack(side=tk.LEFT)
     tk.Label(topbar, text="  Instalments with outstanding dues",
-             font=(FONT_UI, 9), fg=TEXT_DIM, bg=BG_PANEL).pack(side=tk.LEFT)
-    tk.Button(topbar, text="✕  Close", command=win.destroy, font=(FONT_UI, 9),
+             font=(FONT_UI, 12), fg=TEXT_DIM, bg=BG_PANEL).pack(side=tk.LEFT)
+    tk.Button(topbar, text="✕  Close", command=win.destroy, font=(FONT_UI, 12),
               fg=TEXT_DIM, bg=BG_PANEL, activeforeground=ACCENT_RED,
               activebackground=BG_PANEL, relief="flat", bd=0,
               cursor="hand2", padx=12).pack(side=tk.RIGHT)
 
     make_shortcut_bar(right, [
         ("ESC", "CLOSE",       ACCENT_RED),
-        ("F2",  "OPEN CASE",   ACCENT),
-        ("F3",  "INST. CHART", ACCENT_PUR),
+        ("F2",  "INST. CHART", ACCENT_PUR),
+        ("F3",  "OPEN CASE",   ACCENT),
         ("F9",  "SEARCH",      "#36bfd9"),
         ("F5",  "REFRESH",     ACCENT2),
     ])
@@ -2450,9 +2557,9 @@ def due_payments_window(parent):
 
     sf = tk.Frame(right, bg=BG, padx=16, pady=8)
     sf.pack(fill=tk.X)
-    tk.Label(sf, text="🔍", font=(FONT_UI, 11), fg=TEXT_DIM, bg=BG).pack(side=tk.LEFT)
+    tk.Label(sf, text="🔍", font=(FONT_UI, 14), fg=TEXT_DIM, bg=BG).pack(side=tk.LEFT)
     sv = tk.StringVar()
-    se = tk.Entry(sf, textvariable=sv, font=(FONT_UI, 10), fg=TEXT_DIM,
+    se = tk.Entry(sf, textvariable=sv, font=(FONT_UI, 13), fg=TEXT_DIM,
                   bg=BG_CARD, insertbackground=ACCENT, relief="flat",
                   highlightthickness=1, highlightcolor=ACCENT,
                   highlightbackground=BORDER, width=38)
@@ -2462,7 +2569,7 @@ def due_payments_window(parent):
     se.bind("<FocusIn>",  lambda e: (se.delete(0, tk.END), se.config(fg=TEXT)) if se.get() == PH else None)
     se.bind("<FocusOut>", lambda e: (se.insert(0, PH), se.config(fg=TEXT_DIM)) if not se.get() else None)
 
-    rec_badge = tk.Label(sf, text="  0 records  ", font=(FONT_UI, 9, "bold"),
+    rec_badge = tk.Label(sf, text="  0 records  ", font=(FONT_UI, 12, "bold"),
                          fg=ACCENT2, bg="#1b2e4a", padx=6, pady=4)
     rec_badge.pack(side=tk.LEFT)
 
@@ -2530,15 +2637,15 @@ def due_payments_window(parent):
     sbar = tk.Frame(right, bg=BG_PANEL, pady=7, padx=16)
     sbar.pack(fill=tk.X)
     tk.Label(sbar, text="Due Payments  ·  Instalment cases with overdue / unpaid instalments",
-             font=(FONT_UI, 9), fg=TEXT_DIM, bg=BG_PANEL).pack(side=tk.LEFT)
+             font=(FONT_UI, 12), fg=TEXT_DIM, bg=BG_PANEL).pack(side=tk.LEFT)
     bf = tk.Frame(sbar, bg=BG_CARD, padx=12, pady=4)
     bf.pack(side=tk.RIGHT, padx=4)
-    tk.Label(bf, text="Total Overdue Amount", font=(FONT_UI, 7, "bold"), fg=TEXT_DIM, bg=BG_CARD).pack(anchor="w")
+    tk.Label(bf, text="Total Overdue Amount", font=(FONT_UI, 10, "bold"), fg=TEXT_DIM, bg=BG_CARD).pack(anchor="w")
     try:
         tb_ = sum(float(r[7] or 0) for r in all_rows)
     except Exception:
         tb_ = 0
-    bal_lbl = tk.Label(bf, text=f"₹ {tb_:,.2f}", font=(FONT_MONO, 11, "bold"), fg=ACCENT2, bg=BG_CARD)
+    bal_lbl = tk.Label(bf, text=f"₹ {tb_:,.2f}", font=(FONT_MONO, 14, "bold"), fg=ACCENT2, bg=BG_CARD)
     bal_lbl.pack(anchor="w")
 
     # ── Open Case Detail (F2 / double-click) ──────────────────────────────
@@ -2567,8 +2674,8 @@ def due_payments_window(parent):
             open_installment_chart_window(r, win)
 
     win.bind("<Escape>", lambda e: win.destroy())
-    win.bind("<F2>", open_case)
-    win.bind("<F3>", open_chart)
+    win.bind("<F2>", open_chart)
+    win.bind("<F3>", open_case)
     win.bind("<F5>", refresh)
     win.bind("<F9>", lambda e: se.focus_set())
     tree.bind("<Double-1>", lambda e: open_case())
@@ -2590,8 +2697,8 @@ def village_setup_window(parent):
     topbar = tk.Frame(right, bg=BG_PANEL, pady=14, padx=20)
     topbar.pack(fill=tk.X)
     tk.Label(topbar, text="VILLAGE SETUP",
-             font=(FONT_UI, 16, "bold"), fg=TEXT, bg=BG_PANEL).pack(side=tk.LEFT)
-    tk.Button(topbar, text="✕  Close", command=win.destroy, font=(FONT_UI, 9),
+             font=(FONT_UI, 19, "bold"), fg=TEXT, bg=BG_PANEL).pack(side=tk.LEFT)
+    tk.Button(topbar, text="✕  Close", command=win.destroy, font=(FONT_UI, 12),
               fg=TEXT_DIM, bg=BG_PANEL, activeforeground=ACCENT_RED,
               activebackground=BG_PANEL, relief="flat", bd=0,
               cursor="hand2", padx=12).pack(side=tk.RIGHT)
@@ -2599,7 +2706,7 @@ def village_setup_window(parent):
 
     add_bar = tk.Frame(right, bg=BG, padx=20, pady=10)
     add_bar.pack(fill=tk.X)
-    tk.Label(add_bar, text="Village Name:", font=(FONT_UI, 10), fg=TEXT_DIM,
+    tk.Label(add_bar, text="Village Name:", font=(FONT_UI, 13), fg=TEXT_DIM,
              bg=BG).pack(side=tk.LEFT)
     ne = make_entry(add_bar, width=28)
     ne.pack(side=tk.LEFT, ipady=7, padx=(8, 12))
@@ -2613,7 +2720,7 @@ def village_setup_window(parent):
         refresh()
 
     ne.bind("<Return>", add_village)
-    tk.Button(add_bar, text="＋ Add Village", font=(FONT_UI, 9, "bold"),
+    tk.Button(add_bar, text="＋ Add Village", font=(FONT_UI, 12, "bold"),
               fg=BG, bg=ACCENT_PUR, relief="flat", bd=0, padx=14, pady=7,
               cursor="hand2", command=add_village).pack(side=tk.LEFT)
 
@@ -2652,7 +2759,7 @@ def village_setup_window(parent):
     tk.Frame(right, bg=BORDER, height=1).pack(fill=tk.X)
     sbar = tk.Frame(right, bg=BG_PANEL, pady=7, padx=16)
     sbar.pack(fill=tk.X)
-    tk.Button(sbar, text="🗑  Delete Selected  Del", font=(FONT_UI, 9, "bold"),
+    tk.Button(sbar, text="🗑  Delete Selected  Del", font=(FONT_UI, 12, "bold"),
               fg=BG, bg=ACCENT_RED, relief="flat", bd=0, padx=12, pady=5,
               cursor="hand2", command=delete_village).pack(side=tk.LEFT)
 
@@ -2679,9 +2786,9 @@ def main():
     hb.pack(fill=tk.X)
     hi = tk.Frame(hb, bg=BG_PANEL, padx=28, pady=18)
     hi.pack(side=tk.LEFT)
-    tk.Label(hi, text="SANDHU ENTERPRISES", font=(FONT_UI, 22, "bold"),
+    tk.Label(hi, text="SANDHU ENTERPRISES", font=(FONT_UI, 25, "bold"),
              fg=TEXT, bg=BG_PANEL).pack(anchor="w")
-    tk.Label(hi, text="Financial Tracking System", font=(FONT_UI, 10),
+    tk.Label(hi, text="Financial Tracking System", font=(FONT_UI, 13),
              fg=TEXT_DIM, bg=BG_PANEL).pack(anchor="w")
 
     tk.Frame(main_area, bg=BORDER, height=1).pack(fill=tk.X)
@@ -2696,7 +2803,7 @@ def main():
         sf3 = tk.Frame(ss, bg=BG_CARD, padx=24, pady=12)
         sf3.pack(side=tk.LEFT)
         tk.Label(sf3, text=val, font=(FONT_UI, 14, "bold"), fg=color, bg=BG_CARD).pack()
-        tk.Label(sf3, text=lbl, font=(FONT_UI, 8), fg=TEXT_DIM, bg=BG_CARD).pack()
+        tk.Label(sf3, text=lbl, font=(FONT_UI, 11), fg=TEXT_DIM, bg=BG_CARD).pack()
         tk.Frame(ss, bg=BORDER, width=1).pack(side=tk.LEFT, fill=tk.Y)
 
     tk.Frame(main_area, bg=BORDER, height=1).pack(fill=tk.X)
@@ -2706,7 +2813,7 @@ def main():
     nav = tk.Frame(center, bg=BG)
     nav.place(relx=0.5, rely=0.5, anchor="center")
 
-    tk.Label(nav, text="Navigation", font=(FONT_UI, 11, "bold"),
+    tk.Label(nav, text="Navigation", font=(FONT_UI, 14, "bold"),
              fg=TEXT_DIM, bg=BG).pack(pady=(0, 20))
 
     for label, func, color in [
@@ -2720,7 +2827,7 @@ def main():
         rf2 = tk.Frame(nav, bg=BG)
         rf2.pack(fill=tk.X, pady=5)
         btn2 = tk.Button(rf2, text=label, command=lambda f=func: f(root),
-                         font=(FONT_UI, 12, "bold"), fg=TEXT, bg=BG_CARD,
+                         font=(FONT_UI, 15, "bold"), fg=TEXT, bg=BG_CARD,
                          activeforeground=TEXT, activebackground=BG_PANEL,
                          relief="flat", bd=0, cursor="hand2",
                          width=28, height=2, anchor="w", padx=20)
@@ -2734,7 +2841,7 @@ def main():
     sb3 = tk.Frame(main_area, bg=BG_PANEL, pady=6, padx=16)
     sb3.pack(fill=tk.X, side=tk.BOTTOM)
     tk.Label(sb3, text="Sandhu Enterprises  ·  Financial Tracking System  ·  Ready",
-             font=(FONT_UI, 9), fg=TEXT_DIM, bg=BG_PANEL).pack(side=tk.LEFT)
+             font=(FONT_UI, 12), fg=TEXT_DIM, bg=BG_PANEL).pack(side=tk.LEFT)
 
     root.mainloop()
 
