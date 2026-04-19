@@ -2486,6 +2486,8 @@ def due_report_window(parent):
         ("F2",  "OPEN CASE",   ACCENT),
         ("F9",  "SEARCH",      "#36bfd9"),
         ("F5",  "REFRESH",     ACCENT_YEL),
+        ("F6",  "PREVIEW",     "#0ea5e9"),
+        ("F7",  "PRINT",       ACCENT_RED),
     ])
     tk.Frame(right, bg=BORDER, height=1).pack(fill=tk.X)
 
@@ -2506,6 +2508,21 @@ def due_report_window(parent):
     rec_badge = tk.Label(sf, text="  0 records  ", font=(FONT_UI, 12, "bold"),
                          fg=ACCENT, bg="#1b2e4a", padx=6, pady=4)
     rec_badge.pack(side=tk.LEFT)
+
+    # Print / Preview buttons
+    tk.Button(sf, text="👁  Preview  F6",
+              font=(FONT_UI, 11, "bold"), fg=BG, bg="#0ea5e9",
+              relief="flat", bd=0, padx=10, pady=5, cursor="hand2",
+              command=lambda: _open_print_preview(
+                  win,
+                  _build_credit_due_html(_get_credit_visible_rows()),
+                  "Due Report — Credit Cases"
+              )).pack(side=tk.RIGHT, padx=(6, 0))
+    tk.Button(sf, text="🖨  Print  F7",
+              font=(FONT_UI, 11, "bold"), fg=BG, bg=ACCENT_RED,
+              relief="flat", bd=0, padx=10, pady=5, cursor="hand2",
+              command=lambda: _quick_print_credit_due(win, _get_credit_visible_rows())
+              ).pack(side=tk.RIGHT, padx=(6, 0))
 
     COLS   = ['file_no', 'date', 'customer_display', 'village', 'mobile_no', 'finance_amt', 'balance', 'next_due_date', 'id']
     HEADS  = ['File No', 'Date', 'Customer (Father)', 'Village', 'Mobile No', 'Finance Amt', 'Balance', '⚠ Next Due Date', 'ID']
@@ -2599,11 +2616,557 @@ def due_report_window(parent):
                 return
         messagebox.showinfo("Not Found", f"Case ID {case_id} not found.", parent=win)
 
+    def _get_credit_visible_rows():
+        """Return currently visible (filtered) rows from the credit due tree."""
+        return [tree.item(item, "values") for item in tree.get_children()]
+
     win.bind("<Escape>", lambda e: win.destroy())
     win.bind("<F2>", open_case)
     win.bind("<F5>", refresh)
+    win.bind("<F6>", lambda e: _open_print_preview(
+        win, _build_credit_due_html(_get_credit_visible_rows()),
+        "Due Report — Credit Cases"))
+    win.bind("<F7>", lambda e: _quick_print_credit_due(win, _get_credit_visible_rows()))
     win.bind("<F9>", lambda e: se.focus_set())
     tree.bind("<Double-1>", lambda e: open_case())
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# PRINT / PREVIEW — INSTALLMENT DUE PAYMENTS
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _build_installment_due_html(rows, title="DUE PAYMENTS REPORT — INSTALLMENT CASES"):
+    """
+    Build an HTML string for the installment due-payments report.
+    rows: list of tuples matching COLS order:
+      [file_no, date, customer_display, village, mobile_no,
+       instalment_amt, missed_instalments, total_overdue, balance, id]
+    Grouped by village, matching the ledger-style image layout.
+    """
+    from collections import defaultdict
+    from datetime import datetime
+
+    # Group rows by village (col index 3)
+    groups = defaultdict(list)
+    for r in rows:
+        groups[str(r[3]).strip().upper() or "UNKNOWN"].append(r)
+
+    today = datetime.today().strftime("%d/%m/%Y")
+
+    rows_html = ""
+    grand_total_due = 0.0
+    grand_total_inst = 0.0
+
+    for village in sorted(groups.keys()):
+        village_rows = groups[village]
+        rows_html += f"""
+        <tr class="village-header">
+            <td colspan="7"><span class="village-name">{village}</span></td>
+        </tr>"""
+        for r in village_rows:
+            file_no   = r[0]
+            date_val  = r[1]
+            customer  = r[2]
+            mobile    = r[4]
+            inst_amt  = r[5]
+            missed    = r[6]
+            total_due = r[7]
+            balance   = r[8]
+
+            try:
+                inst_f = float(inst_amt or 0)
+            except Exception:
+                inst_f = 0.0
+            try:
+                due_f = float(total_due or 0)
+            except Exception:
+                due_f = 0.0
+
+            grand_total_inst += inst_f
+            grand_total_due  += due_f
+
+            rows_html += f"""
+        <tr class="data-row">
+            <td class="file-cell">
+                <div class="file-no">{file_no}</div>
+                <div class="date-sub">{date_val}</div>
+            </td>
+            <td class="customer-cell">
+                <div class="cust-name">{customer}</div>
+            </td>
+            <td class="mobile-cell">{mobile}</td>
+            <td class="num-cell missed">{missed}</td>
+            <td class="num-cell inst-amt">₹ {inst_f:,.2f}</td>
+            <td class="num-cell total-due highlight">₹ {due_f:,.2f}</td>
+            <td class="num-cell balance">₹ {float(balance or 0):,.2f}</td>
+        </tr>"""
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>{title}</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;600;700&display=swap');
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{
+    font-family: 'Noto Sans', 'Segoe UI', Arial, sans-serif;
+    font-size: 12px;
+    background: #fff;
+    color: #1a1a2e;
+    padding: 18px 20px;
+  }}
+  .report-header {{
+    border-bottom: 3px solid #1e40af;
+    padding-bottom: 10px;
+    margin-bottom: 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+  }}
+  .company-name {{
+    font-size: 20px;
+    font-weight: 700;
+    color: #1e40af;
+    letter-spacing: 1px;
+  }}
+  .report-title {{
+    font-size: 13px;
+    font-weight: 600;
+    color: #374151;
+    margin-top: 2px;
+  }}
+  .report-meta {{
+    font-size: 11px;
+    color: #6b7280;
+    text-align: right;
+  }}
+  table {{
+    width: 100%;
+    border-collapse: collapse;
+  }}
+  th {{
+    background: #1e3a8a;
+    color: #fff;
+    font-size: 10.5px;
+    font-weight: 600;
+    padding: 7px 8px;
+    text-align: left;
+    letter-spacing: 0.5px;
+  }}
+  th.num {{ text-align: right; }}
+  .village-header td {{
+    background: #dbeafe;
+    color: #1e3a8a;
+    padding: 5px 8px;
+    font-weight: 700;
+    font-size: 11.5px;
+    border-top: 1px solid #bfdbfe;
+  }}
+  .village-name {{
+    display: inline-block;
+    border-left: 4px solid #2563eb;
+    padding-left: 8px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }}
+  .data-row td {{
+    padding: 5px 8px;
+    border-bottom: 1px solid #f0f0f0;
+    vertical-align: top;
+  }}
+  .data-row:nth-child(even) td {{ background: #f9fafb; }}
+  .data-row:nth-child(odd)  td {{ background: #ffffff; }}
+  .file-no   {{ font-weight: 600; color: #374151; }}
+  .date-sub  {{ font-size: 10px; color: #9ca3af; margin-top: 1px; }}
+  .cust-name {{ font-weight: 600; color: #111827; }}
+  .mobile-cell {{ color: #4b5563; font-size: 11px; vertical-align: middle; }}
+  .num-cell  {{ text-align: right; font-variant-numeric: tabular-nums; }}
+  .missed    {{ color: #b45309; font-weight: 700; font-size: 13px; text-align: center; }}
+  .inst-amt  {{ color: #1d4ed8; }}
+  .total-due {{ color: #b91c1c; font-weight: 700; }}
+  .highlight {{ background: #fff7ed !important; }}
+  .balance   {{ color: #047857; }}
+  .grand-total-row td {{
+    background: #1e3a8a;
+    color: #fff;
+    font-weight: 700;
+    font-size: 12px;
+    padding: 8px 8px;
+    border-top: 2px solid #1e40af;
+  }}
+  .grand-total-row .num-cell {{ text-align: right; }}
+  .footer {{
+    margin-top: 16px;
+    font-size: 10px;
+    color: #9ca3af;
+    text-align: center;
+    border-top: 1px solid #e5e7eb;
+    padding-top: 8px;
+  }}
+  @media print {{
+    body {{ padding: 8px 10px; }}
+    .no-print {{ display: none !important; }}
+    @page {{ margin: 10mm; size: A4; }}
+  }}
+</style>
+</head>
+<body>
+<div class="report-header">
+  <div>
+    <div class="company-name">SANDHU ENTERPRISES</div>
+    <div class="report-title">DUE PAYMENTS — INSTALLMENT CASES</div>
+  </div>
+  <div class="report-meta">
+    Printed: {today}<br>
+    Total Records: {len(rows)}
+  </div>
+</div>
+
+<div class="no-print" style="margin-bottom:12px; display:flex; gap:10px;">
+  <button onclick="window.print()"
+    style="background:#1e40af;color:#fff;border:none;padding:8px 20px;
+           font-size:13px;font-weight:600;border-radius:5px;cursor:pointer;">
+    🖨 Print
+  </button>
+  <button onclick="window.close()"
+    style="background:#f3f4f6;color:#374151;border:1px solid #d1d5db;
+           padding:8px 16px;font-size:13px;border-radius:5px;cursor:pointer;">
+    ✕ Close
+  </button>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>File No / Date</th>
+      <th>Customer (Father)</th>
+      <th>Mobile No</th>
+      <th class="num" style="text-align:center;">Missed</th>
+      <th class="num">Inst. Amt</th>
+      <th class="num">Total Due</th>
+      <th class="num">Balance</th>
+    </tr>
+  </thead>
+  <tbody>
+    {rows_html}
+    <tr class="grand-total-row">
+      <td colspan="4">GRAND TOTAL — {len(rows)} CASES</td>
+      <td class="num-cell">₹ {grand_total_inst:,.2f}</td>
+      <td class="num-cell">₹ {grand_total_due:,.2f}</td>
+      <td></td>
+    </tr>
+  </tbody>
+</table>
+<div class="footer">Sandhu Enterprises · Financial Tracking System · Generated {today}</div>
+</body>
+</html>"""
+    return html
+
+
+def _build_credit_due_html(rows, title="DUE REPORT — CREDIT CASES"):
+    """
+    Build HTML for the credit due report.
+    rows: tuples matching COLS order:
+      [file_no, date, customer_display, village, mobile_no,
+       finance_amt, balance, next_due_date, id]
+    """
+    from collections import defaultdict
+    from datetime import datetime
+
+    groups = defaultdict(list)
+    for r in rows:
+        groups[str(r[3]).strip().upper() or "UNKNOWN"].append(r)
+
+    today = datetime.today().strftime("%d/%m/%Y")
+
+    rows_html = ""
+    grand_finance = 0.0
+    grand_balance = 0.0
+
+    for village in sorted(groups.keys()):
+        village_rows = groups[village]
+        rows_html += f"""
+        <tr class="village-header">
+            <td colspan="7"><span class="village-name">{village}</span></td>
+        </tr>"""
+        for r in village_rows:
+            file_no     = r[0]
+            date_val    = r[1]
+            customer    = r[2]
+            mobile      = r[4]
+            finance_amt = r[5]
+            balance     = r[6]
+            next_due    = r[7]
+
+            try:
+                fin_f = float(str(finance_amt or 0).replace(',', ''))
+            except Exception:
+                fin_f = 0.0
+            try:
+                bal_f = float(str(balance or 0).replace(',', ''))
+            except Exception:
+                bal_f = 0.0
+
+            grand_finance += fin_f
+            grand_balance += bal_f
+
+            rows_html += f"""
+        <tr class="data-row">
+            <td class="file-cell">
+                <div class="file-no">{file_no}</div>
+                <div class="date-sub">{date_val}</div>
+            </td>
+            <td class="customer-cell">
+                <div class="cust-name">{customer}</div>
+            </td>
+            <td class="mobile-cell">{mobile}</td>
+            <td class="num-cell due-date">{next_due}</td>
+            <td class="num-cell fin-amt">₹ {fin_f:,.2f}</td>
+            <td class="num-cell balance highlight">₹ {bal_f:,.2f}</td>
+            <td class="num-cell total-due">₹ {bal_f:,.2f}</td>
+        </tr>"""
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>{title}</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;600;700&display=swap');
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{
+    font-family: 'Noto Sans', 'Segoe UI', Arial, sans-serif;
+    font-size: 12px;
+    background: #fff;
+    color: #1a1a2e;
+    padding: 18px 20px;
+  }}
+  .report-header {{
+    border-bottom: 3px solid #dc2626;
+    padding-bottom: 10px;
+    margin-bottom: 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+  }}
+  .company-name {{ font-size: 20px; font-weight: 700; color: #dc2626; letter-spacing: 1px; }}
+  .report-title  {{ font-size: 13px; font-weight: 600; color: #374151; margin-top: 2px; }}
+  .report-meta   {{ font-size: 11px; color: #6b7280; text-align: right; }}
+  table {{ width: 100%; border-collapse: collapse; }}
+  th {{
+    background: #7f1d1d;
+    color: #fff;
+    font-size: 10.5px;
+    font-weight: 600;
+    padding: 7px 8px;
+    text-align: left;
+    letter-spacing: 0.5px;
+  }}
+  th.num {{ text-align: right; }}
+  .village-header td {{
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 5px 8px;
+    font-weight: 700;
+    font-size: 11.5px;
+    border-top: 1px solid #fecaca;
+  }}
+  .village-name {{
+    display: inline-block;
+    border-left: 4px solid #dc2626;
+    padding-left: 8px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }}
+  .data-row td {{
+    padding: 5px 8px;
+    border-bottom: 1px solid #f0f0f0;
+    vertical-align: top;
+  }}
+  .data-row:nth-child(even) td {{ background: #f9fafb; }}
+  .data-row:nth-child(odd)  td {{ background: #ffffff; }}
+  .file-no   {{ font-weight: 600; color: #374151; }}
+  .date-sub  {{ font-size: 10px; color: #9ca3af; margin-top: 1px; }}
+  .cust-name {{ font-weight: 600; color: #111827; }}
+  .mobile-cell {{ color: #4b5563; font-size: 11px; vertical-align: middle; }}
+  .num-cell  {{ text-align: right; font-variant-numeric: tabular-nums; }}
+  .due-date  {{ color: #b45309; font-weight: 600; text-align: center; }}
+  .fin-amt   {{ color: #1d4ed8; }}
+  .balance   {{ color: #047857; }}
+  .highlight {{ background: #fff7ed !important; }}
+  .total-due {{ color: #b91c1c; font-weight: 700; }}
+  .grand-total-row td {{
+    background: #7f1d1d;
+    color: #fff;
+    font-weight: 700;
+    font-size: 12px;
+    padding: 8px 8px;
+    border-top: 2px solid #dc2626;
+  }}
+  .grand-total-row .num-cell {{ text-align: right; }}
+  .footer {{
+    margin-top: 16px;
+    font-size: 10px;
+    color: #9ca3af;
+    text-align: center;
+    border-top: 1px solid #e5e7eb;
+    padding-top: 8px;
+  }}
+  @media print {{
+    body {{ padding: 8px 10px; }}
+    .no-print {{ display: none !important; }}
+    @page {{ margin: 10mm; size: A4; }}
+  }}
+</style>
+</head>
+<body>
+<div class="report-header">
+  <div>
+    <div class="company-name">SANDHU ENTERPRISES</div>
+    <div class="report-title">DUE REPORT — CREDIT CASES</div>
+  </div>
+  <div class="report-meta">
+    Printed: {today}<br>
+    Total Records: {len(rows)}
+  </div>
+</div>
+
+<div class="no-print" style="margin-bottom:12px; display:flex; gap:10px;">
+  <button onclick="window.print()"
+    style="background:#dc2626;color:#fff;border:none;padding:8px 20px;
+           font-size:13px;font-weight:600;border-radius:5px;cursor:pointer;">
+    🖨 Print
+  </button>
+  <button onclick="window.close()"
+    style="background:#f3f4f6;color:#374151;border:1px solid #d1d5db;
+           padding:8px 16px;font-size:13px;border-radius:5px;cursor:pointer;">
+    ✕ Close
+  </button>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>File No / Date</th>
+      <th>Customer (Father)</th>
+      <th>Mobile No</th>
+      <th class="num" style="text-align:center;">Next Due Date</th>
+      <th class="num">Finance Amt</th>
+      <th class="num">Balance</th>
+      <th class="num">Total Due</th>
+    </tr>
+  </thead>
+  <tbody>
+    {rows_html}
+    <tr class="grand-total-row">
+      <td colspan="4">GRAND TOTAL — {len(rows)} CASES</td>
+      <td class="num-cell">₹ {grand_finance:,.2f}</td>
+      <td class="num-cell">₹ {grand_balance:,.2f}</td>
+      <td class="num-cell">₹ {grand_balance:,.2f}</td>
+    </tr>
+  </tbody>
+</table>
+<div class="footer">Sandhu Enterprises · Financial Tracking System · Generated {today}</div>
+</body>
+</html>"""
+    return html
+
+
+def _open_print_preview(parent, html_content, title="Print Preview"):
+    """
+    Open a Tkinter Toplevel showing the report in a preview window
+    with a 'Print' button that writes the HTML to a temp file and
+    opens it in the default browser (which supports Ctrl+P / Print).
+    """
+    import tempfile, os, webbrowser
+
+    # Write HTML to a temporary file
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".html",
+                                      mode="w", encoding="utf-8")
+    tmp.write(html_content)
+    tmp.close()
+
+    preview_path = tmp.name
+
+    win = tk.Toplevel(parent)
+    win.title(f"Preview — {title}")
+    win.geometry("820x640")
+    win.configure(bg=BG)
+    apply_dark_titlebar(win)
+
+    # ── Top bar ───────────────────────────────────────────────────────────
+    topbar = tk.Frame(win, bg=BG_PANEL, pady=10, padx=16)
+    topbar.pack(fill=tk.X)
+    tk.Label(topbar, text=f"📄  {title}", font=(FONT_UI, 14, "bold"),
+             fg=TEXT, bg=BG_PANEL).pack(side=tk.LEFT)
+
+    def do_print():
+        webbrowser.open(f"file:///{preview_path.replace(os.sep, '/')}")
+
+    tk.Button(topbar, text="🖨  Open & Print in Browser",
+              command=do_print,
+              font=(FONT_UI, 12, "bold"), fg=BG, bg=ACCENT,
+              relief="flat", bd=0, padx=16, pady=6,
+              cursor="hand2").pack(side=tk.RIGHT, padx=(8, 0))
+    tk.Button(topbar, text="✕  Close", command=win.destroy,
+              font=(FONT_UI, 12), fg=TEXT_DIM, bg=BG_PANEL,
+              relief="flat", bd=0, padx=12, pady=6,
+              cursor="hand2").pack(side=tk.RIGHT)
+
+    tk.Frame(win, bg=BORDER, height=1).pack(fill=tk.X)
+
+    # ── Preview panel (scrollable HTML-like text render) ──────────────────
+    # We render a simplified plain-text version inside Tkinter
+    # and open the real HTML for printing in browser
+    info_frame = tk.Frame(win, bg=BG_CARD,
+                          highlightbackground=BORDER, highlightthickness=1)
+    info_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=16)
+
+    txt = tk.Text(info_frame, font=(FONT_MONO, 11), fg=TEXT, bg=BG_CARD,
+                  relief="flat", highlightthickness=0,
+                  padx=12, pady=10, wrap="none")
+    sb_v = tk.Scrollbar(info_frame, orient="vertical", command=txt.yview)
+    sb_h = tk.Scrollbar(info_frame, orient="horizontal", command=txt.xview)
+    txt.configure(yscrollcommand=sb_v.set, xscrollcommand=sb_h.set)
+    sb_v.pack(side=tk.RIGHT,  fill=tk.Y)
+    sb_h.pack(side=tk.BOTTOM, fill=tk.X)
+    txt.pack(fill=tk.BOTH, expand=True)
+
+    # Parse a plain-text preview from the HTML for display inside Tkinter
+    import re
+    text_only = re.sub(r'<[^>]+>', '', html_content)
+    text_only = re.sub(r'[ \t]{2,}', '  ', text_only)
+    text_only = re.sub(r'\n{3,}', '\n\n', text_only)
+    txt.insert("1.0", text_only.strip())
+    txt.configure(state="disabled")
+
+    hint = tk.Label(win,
+                    text="Click 'Open & Print in Browser' to get a full formatted preview and print  (Ctrl+P in the browser).",
+                    font=(FONT_UI, 11), fg=TEXT_DIM, bg=BG, wraplength=780)
+    hint.pack(pady=(0, 10))
+
+    win.bind("<Escape>", lambda e: win.destroy())
+
+
+def _quick_print_installment_due(parent, rows):
+    """Write HTML to temp file and open in browser immediately."""
+    import tempfile, os, webbrowser
+    html = _build_installment_due_html(rows)
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".html",
+                                      mode="w", encoding="utf-8")
+    tmp.write(html); tmp.close()
+    webbrowser.open(f"file:///{tmp.name.replace(os.sep, '/')}")
+
+
+def _quick_print_credit_due(parent, rows):
+    """Write HTML to temp file and open in browser immediately."""
+    import tempfile, os, webbrowser
+    html = _build_credit_due_html(rows)
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".html",
+                                      mode="w", encoding="utf-8")
+    tmp.write(html); tmp.close()
+    webbrowser.open(f"file:///{tmp.name.replace(os.sep, '/')}")
 
 
 def due_payments_window(parent):
@@ -2636,6 +3199,8 @@ def due_payments_window(parent):
         ("F3",  "OPEN CASE",   ACCENT),
         ("F9",  "SEARCH",      "#36bfd9"),
         ("F5",  "REFRESH",     ACCENT2),
+        ("F6",  "PREVIEW",     "#0ea5e9"),
+        ("F7",  "PRINT",       ACCENT_YEL),
     ])
     tk.Frame(right, bg=BORDER, height=1).pack(fill=tk.X)
 
@@ -2656,6 +3221,21 @@ def due_payments_window(parent):
     rec_badge = tk.Label(sf, text="  0 records  ", font=(FONT_UI, 12, "bold"),
                          fg=ACCENT2, bg="#1b2e4a", padx=6, pady=4)
     rec_badge.pack(side=tk.LEFT)
+
+    # Print / Preview buttons in the search bar
+    tk.Button(sf, text="👁  Preview  F6",
+              font=(FONT_UI, 11, "bold"), fg=BG, bg="#0ea5e9",
+              relief="flat", bd=0, padx=10, pady=5, cursor="hand2",
+              command=lambda: _open_print_preview(
+                  win,
+                  _build_installment_due_html(_get_visible_rows()),
+                  "Due Payments — Installment Cases"
+              )).pack(side=tk.RIGHT, padx=(6, 0))
+    tk.Button(sf, text="🖨  Print  F7",
+              font=(FONT_UI, 11, "bold"), fg=BG, bg=ACCENT_YEL,
+              relief="flat", bd=0, padx=10, pady=5, cursor="hand2",
+              command=lambda: _quick_print_installment_due(win, _get_visible_rows())
+              ).pack(side=tk.RIGHT, padx=(6, 0))
 
     COLS   = ['file_no', 'date', 'customer_display', 'village', 'mobile_no', 'instalment_amt', 'missed_instalments', 'total_overdue', 'balance', 'id']
     HEADS  = ['File No', 'Date', 'Customer (Father)', 'Village', 'Mobile No', 'Inst. Amt', 'Missed', 'Total Overdue', 'Total Balance', 'ID']
@@ -2757,10 +3337,18 @@ def due_payments_window(parent):
         if r:
             open_installment_chart_window(r, win)
 
+    def _get_visible_rows():
+        """Return currently visible (filtered) rows from the tree."""
+        return [tree.item(item, "values") for item in tree.get_children()]
+
     win.bind("<Escape>", lambda e: win.destroy())
     win.bind("<F2>", open_chart)
     win.bind("<F3>", open_case)
     win.bind("<F5>", refresh)
+    win.bind("<F6>", lambda e: _open_print_preview(
+        win, _build_installment_due_html(_get_visible_rows()),
+        "Due Payments — Installment Cases"))
+    win.bind("<F7>", lambda e: _quick_print_installment_due(win, _get_visible_rows()))
     win.bind("<F9>", lambda e: se.focus_set())
     tree.bind("<Double-1>", lambda e: open_case())
 
