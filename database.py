@@ -354,11 +354,14 @@ def save_credit_case(data):
     DATE_FIELDS = {'date', 'next_due_date'}
 
     def val(f):
-        if f in num_fields:   return _flt(data.get(f, 0))
-        if f in DATE_FIELDS:  return _date(data, f)
+        if f in num_fields:
+            return _flt(data.get(f, 0))
+        if f in DATE_FIELDS:
+            return to_mysql_date(data.get(f))   # ✅ FIXED
         return _v(data, f)
 
     case_id = data.get('id')
+
     if case_id:
         sets = ", ".join(f"{f}=%s" for f in all_fields)
         vals = [val(f) for f in all_fields] + [case_id]
@@ -369,20 +372,30 @@ def save_credit_case(data):
         vals = [val(f) for f in all_fields]
         c.execute(f"INSERT INTO credit_cases ({cols}) VALUES ({phs})", vals)
         case_id = c.lastrowid
+
+    # 🔥 Clear old payment rows
     c.execute("DELETE FROM credit_payment_rows WHERE case_id=%s", (case_id,))
+
+    # 🔥 Insert payment rows (FIXED DATE HANDLING)
     for row in data.get('payment_rows', []):
         raw_date = row[1] if len(row) > 1 else ''
-        row_date = None if not raw_date or str(raw_date).strip() == '' else str(raw_date)
+        row_date = to_mysql_date(raw_date)   # ✅ FIXED
+
         c.execute("""
             INSERT INTO credit_payment_rows (case_id, description, date, sale_amt, receipt)
             VALUES (%s,%s,%s,%s,%s)
-        """, (case_id,
-              row[0] if len(row) > 0 else '',
-              row_date,
-              _flt(row[2]) if len(row) > 2 else 0,
-              _flt(row[3]) if len(row) > 3 else 0))
+        """, (
+            case_id,
+            row[0] if len(row) > 0 else '',
+            row_date,
+            _flt(row[2]) if len(row) > 2 else 0,
+            _flt(row[3]) if len(row) > 3 else 0
+        ))
+
     conn.commit()
-    c.close(); conn.close()
+    c.close()
+    conn.close()
+
     return case_id
 
 
