@@ -55,20 +55,36 @@ def fmt_customer(name, relation=""):
 
 from datetime import datetime
 
-# UI → DB
-def to_mysql_date(d):
+# Accepts any common date format — no more ValueError crashes
+_DATE_FORMATS = [
+    "%d/%m/%Y",   # DD/MM/YYYY  ← primary UI input format
+    "%Y-%m-%d",   # YYYY-MM-DD  ← MySQL native / already-converted
+    "%Y/%m/%d",   # YYYY/MM/DD
+    "%d-%m-%Y",   # DD-MM-YYYY
+    "%m/%d/%Y",   # MM/DD/YYYY
+]
+
+def _parse_date(d):
     if not d or str(d).strip() == "":
         return None
-    return datetime.strptime(d, "%d/%m/%Y").strftime("%Y-%m-%d")
+    s = str(d).strip()
+    for fmt in _DATE_FORMATS:
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    return None
 
-# DB → UI
+# any format → YYYY-MM-DD for MySQL
+def to_mysql_date(d):
+    dt = _parse_date(d)
+    return dt.strftime("%Y-%m-%d") if dt else None
+
+# any format → DD/MM/YYYY for display
 def to_display_date(d):
-    if not d:
-        return ""
-    try:
-        return datetime.strptime(str(d), "%Y-%m-%d").strftime("%d/%m/%Y")
-    except:
-        return d
+    dt = _parse_date(d)
+    return dt.strftime("%d/%m/%Y") if dt else ""
+
 
 
 # ── Admin password ────────────────────────────────────────────────────────────
@@ -723,7 +739,7 @@ def open_installment_case_detail(data, refresh_callback=None):
     tk.Frame(root, bg=BORDER, height=1).pack(fill=tk.X)
 
     # ── Scrollable canvas ─────────────────────────────────────────────────
-    canvas = tk.Canvas(root, bg=BG, highlightthickness=0)
+    canvas = tk.Canvas(root, bg=BG, highlightthickness=0) 
     canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
     body = tk.Frame(canvas, bg=BG, padx=20, pady=16)
@@ -855,24 +871,8 @@ def open_installment_case_detail(data, refresh_callback=None):
         return ""
 
     def save_changes(e=None):
-        data["file_no"]    = get("file_no")
-        data["date"]       = get("date")
-        data["customer"]   = get("customer")
-        data["relation"]   = get("relation")
-        data["address"]    = get("address")
-        data["village"]    = get("village")
-        data["mobile_no"]  = get("mobile_no")
-        data["remarks"]    = get("remarks")
-        data["item"]       = get("item")
-        data["brand"]      = get("brand")
-        data["model"]      = get("model")
-        data["srno"]       = get("srno")
-        data["invoice_no"] = get("invoice_no")
-        data["amount"]     = get("amount")
-        data["advance"]    = get("advance")
-    def save_changes(e=None):
         data["file_no"]        = get("file_no")
-        data["date"]           = get("date")
+        data["date"]           = to_mysql_date(get("date"))
         data["customer"]       = get("customer")
         data["relation"]       = get("relation")
         data["address1"]       = get("address")
@@ -1030,14 +1030,9 @@ def open_installment_chart_window(case_record, parent_win):
             return "paid"
         # Check if the instalment date has already passed today
         if inst_date and str(inst_date).strip():
-            for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d"):
-                try:
-                    due = _dt_chart.datetime.strptime(str(inst_date).strip(), fmt).date()
-                    if due < _dt_chart.date.today():
-                        return "overdue"
-                    break
-                except ValueError:
-                    continue
+            dt = _parse_date(str(inst_date).strip())
+            if dt and dt.date() < _dt_chart.date.today():
+                return "overdue" 
         return "unpaid"
 
     if saved:
@@ -1051,18 +1046,13 @@ def open_installment_chart_window(case_record, parent_win):
                 p.get('receipt_no', ''),
                 p.get('amount', ''),
                 p.get('balance', balance_orig),
-            ), tags=(_row_tag(i, to_display_date(recv), to_display_date(inst_date)),))
+            ), tags=(_row_tag(i, recv, inst_date),),)
     else:
         # Generate monthly instalment dates starting from the case date (or today)
         import calendar
         raw_case_date = r.get('date', '')
-        try:
-            start_date = _dt_chart.datetime.strptime(str(raw_case_date).strip(), "%Y-%m-%d").date()
-        except Exception:
-            try:
-                start_date = _dt_chart.datetime.strptime(str(raw_case_date).strip(), "%d/%m/%Y").date()
-            except Exception:
-                start_date = _dt_chart.date.today()
+        _sd = _parse_date(str(raw_case_date).strip())
+        start_date = _sd.date() if _sd else _dt_chart.date.today()
         for i in range(1, no_inst + 1):
             # Advance by i months from start_date
             month = start_date.month - 1 + i
@@ -1106,11 +1096,24 @@ def open_installment_chart_window(case_record, parent_win):
         def commit(e=None):
             vals = list(tree2.item(item, "values"))
             vals[ci] = ent.get()
-            # update paid/overdue/unpaid colour based on recv_date (index 2) and inst_date (index 1)
-            recv      = vals[2] if ci != 2 else ent.get()
-            inst_date = to_display_date(vals[1]) if ci != 1 else ent.get()
+
+            recv_raw = vals[2]
+            inst_raw = vals[1]
+
+            recv_dt = _parse_date(recv_raw)
+            inst_dt = _parse_date(inst_raw)
+
+            recv = recv_dt.strftime("%d/%m/%Y") if recv_dt else ""
+            inst_date = inst_dt.strftime("%d/%m/%Y") if inst_dt else ""
+
+            vals[1] = inst_date
+            vals[2] = recv
+
             tree2.item(item, values=vals, tags=(_row_tag(0, recv, inst_date),))
-            ent.destroy(); edit_entry[0] = None
+
+            ent.destroy()
+            edit_entry[0] = None
+
             _recalc_balance()
 
         ent.bind("<Return>",   commit)
@@ -1122,25 +1125,37 @@ def open_installment_chart_window(case_record, parent_win):
 
     # ── Balance recalc ────────────────────────────────────────────────────
     def _recalc_balance():
-        """Recompute running balance for each row and update badge."""
         try:
-            fin_amt = float(str(r.get('amount_financed') or r.get('finance_amt') or 0))
+            running = float(str(balance_orig).replace(',', '') or 0)
         except Exception:
-            fin_amt = 0.0
-        running = fin_amt
+            running = 0.0
+
         children = tree2.get_children()
+
         for child in children:
             vals = list(tree2.item(child, "values"))
+
+            recv_dt = _parse_date(vals[2])
+            inst_dt = _parse_date(vals[1])
+
+            recv      = recv_dt.strftime("%d/%m/%Y") if recv_dt else ""
+            inst_date = inst_dt.strftime("%d/%m/%Y") if inst_dt else ""
+
+            vals[1] = inst_date
+            vals[2] = recv
+
             try:
                 paid = float(str(vals[4]).replace(',', '') or 0)
             except Exception:
                 paid = 0.0
-            if vals[2] and str(vals[2]).strip():   # has recv_date → paid
+
+            if recv:
                 running -= paid
+
             vals[5] = f"{running:.2f}"
-            recv      = vals[2]
-            inst_date = vals[1]
+
             tree2.item(child, values=vals, tags=(_row_tag(0, recv, inst_date),))
+
         bal_badge_var.set(f"₹ {running:,.2f}")
 
     # ── Add / Delete rows ─────────────────────────────────────────────────
@@ -1175,18 +1190,27 @@ def open_installment_chart_window(case_record, parent_win):
             v = tree2.item(child, "values")
             rows.append({
                 'inst_no':    v[0],
-                'inst_date':  v[1],
-                'recv_date':  v[2],
+                'inst_date':  to_mysql_date(v[1]) if v[1] else None,
+                'recv_date':  to_mysql_date(v[2]) if v[2] else None,
                 'receipt_no': v[3],
                 'amount':     v[4],
                 'balance':    v[5],
             })
-        try:
-            db.save_installment_payments(int(case_id_str), rows)
-            _reload_all()
-            messagebox.showinfo("Saved ✓", "Installment chart saved to database.", parent=top)
-        except Exception as ex:
-            messagebox.showerror("Error", str(ex), parent=top)
+        import time as _time
+        last_ex = None
+        for attempt in range(3):
+            try:
+                db.save_installment_payments(int(case_id_str), rows)
+                _reload_all()
+                messagebox.showinfo("Saved ✓", "Installment chart saved to database.", parent=top)
+                return
+            except Exception as ex:
+                last_ex = ex
+                if "1205" in str(ex) or "Lock wait timeout" in str(ex):
+                    _time.sleep(1.5)
+                    continue
+                break
+        messagebox.showerror("Error", str(last_ex), parent=top)
 
     # ── Button bar ────────────────────────────────────────────────────────
     tk.Frame(top, bg=BORDER, height=1).pack(fill="x")
@@ -1650,10 +1674,24 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
     ])
     tk.Frame(win, bg=BORDER, height=1).pack(fill=tk.X)
 
-    # ── Main paned layout: no scroll needed at 1920×1080 ─────────────────
-    # outer frame fills everything between shortcut bar and action bar
-    outer = tk.Frame(win, bg=BG)
-    outer.pack(fill=tk.BOTH, expand=True, padx=24, pady=12)
+    # ── Scrollable canvas wrapper ─────────────────────────────────────────
+    scroll_canvas = tk.Canvas(win, bg=BG, highlightthickness=0)
+    _vsb = tk.Scrollbar(win, orient="vertical", command=scroll_canvas.yview)
+    _vsb.pack(side=tk.RIGHT, fill=tk.Y)
+    scroll_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    scroll_canvas.configure(yscrollcommand=_vsb.set)
+
+    outer = tk.Frame(scroll_canvas, bg=BG, padx=24, pady=12)
+    _outer_id = scroll_canvas.create_window((0, 0), window=outer, anchor="nw")
+
+    def _on_outer_configure(e):
+        scroll_canvas.configure(scrollregion=scroll_canvas.bbox("all"))
+    def _on_canvas_resize(e):
+        scroll_canvas.itemconfig(_outer_id, width=e.width)
+    outer.bind("<Configure>", _on_outer_configure)
+    scroll_canvas.bind("<Configure>", _on_canvas_resize)
+    scroll_canvas.bind_all("<MouseWheel>",
+        lambda e: scroll_canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
 
     # Two columns: LEFT ~30%  |  RIGHT ~70%
     outer.grid_columnconfigure(0, weight=3)   # customer + guarantor
@@ -1802,6 +1840,7 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
     amount_var  = tk.StringVar(value=d.get('amount', ''))
     receipt_var = tk.StringVar(value=d.get('total_receipt', '0.00'))
     balance_var = tk.StringVar(value=d.get('balance', '0.00'))
+    fine_var    = tk.StringVar(value=d.get('fine', ''))
 
     money_entry(ig, amount_var,  0, "AMOUNT",         editable=False, color=ACCENT_YEL)
     money_entry(ig, receipt_var, 1, "TOTAL RECEIPT",  editable=False)
@@ -1815,6 +1854,17 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
     e_due.insert(0, to_display_date(d.get('next_due_date')) or datetime.today().strftime("%d/%m/%Y"))
     e_due.grid(row=3, column=1, sticky="ew", ipady=7, pady=6, padx=(0, 8))
     entries['next_due_date'] = e_due
+
+    # FINE — editable, shown in red
+    tk.Label(ig, text="FINE  ₹", font=(FONT_UI, 13, "bold"), fg=ACCENT_RED,
+             bg=BG_CARD, width=16, anchor="w").grid(row=4, column=0, sticky="w", pady=6, padx=4)
+    fine_entry_w = tk.Entry(ig, textvariable=fine_var,
+                            font=(FONT_MONO, 14, "bold"), fg=ACCENT_RED, bg=BG_INPUT,
+                            insertbackground=ACCENT_RED, relief="flat",
+                            highlightthickness=1, highlightcolor=ACCENT_RED,
+                            highlightbackground=BORDER, width=20)
+    fine_entry_w.grid(row=4, column=1, sticky="ew", ipady=8, pady=6, padx=(0, 8))
+    entries['fine'] = fine_var
 
     # Photo placeholder — right side of item card
     photo_frame = tk.Frame(item_inner, bg=BG_CARD,
@@ -2110,6 +2160,7 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
             'g1_village':     get('g1_village'),
             'g1_mobile':      get('g1_mobile'),
             'g1_remarks':     get('g1_remarks'),
+            'fine':           get('fine'),
             'payment_rows':   rows,
         }
 
@@ -2125,20 +2176,20 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
                             parent=win)
         win.destroy()
 
-    tk.Button(action_bar, text="✕  CANCEL  ESC",
-              command=win.destroy,
-              font=(FONT_UI, 14, "bold"), fg=ACCENT_RED, bg=BG_CARD,
-              activeforeground=ACCENT_RED, activebackground=BG_PANEL,
-              relief="flat", bd=0, cursor="hand2", padx=20, pady=10,
-              highlightthickness=1, highlightbackground=ACCENT_RED
-              ).pack(side=tk.LEFT, padx=(0, 16))
+    # tk.Button(action_bar, text="✕  CANCEL  ESC",
+    #           command=win.destroy,
+    #           font=(FONT_UI, 14, "bold"), fg=ACCENT_RED, bg=BG_CARD,
+    #           activeforeground=ACCENT_RED, activebackground=BG_PANEL,
+    #           relief="flat", bd=0, cursor="hand2", padx=20, pady=10,
+    #           highlightthickness=1, highlightbackground=ACCENT_RED
+    #           ).pack(side=tk.LEFT, padx=(0, 16))
 
-    tk.Button(action_bar, text="💾  SAVE & EXIT  F10",
-              command=save_and_exit,
-              font=(FONT_UI, 14, "bold"), fg=BG, bg=ACCENT2,
-              activeforeground=BG, activebackground="#2ebd68",
-              relief="flat", bd=0, cursor="hand2", padx=24, pady=10,
-              ).pack(side=tk.LEFT)
+    # tk.Button(action_bar, text="💾  SAVE & EXIT  F10",
+    #           command=save_and_exit,
+    #           font=(FONT_UI, 14, "bold"), fg=BG, bg=ACCENT2,
+    #           activeforeground=BG, activebackground="#2ebd68",
+    #           relief="flat", bd=0, cursor="hand2", padx=24, pady=10,
+    #           ).pack(side=tk.LEFT)
 
     win.bind("<F10>",    save_and_exit)
     win.bind("<Escape>", lambda e: win.destroy())
@@ -2213,7 +2264,9 @@ def credit_cases_window(parent):
             due_raw = r.get('next_due_date') or ''
             if not due_raw:
                 return ''
-            due_dt = datetime.strptime(str(due_raw).strip(), "%Y-%m-%d").date()
+            _due_p = _parse_date(str(due_raw).strip())
+            if not _due_p: return ''
+            due_dt = _due_p.date()
             today  = datetime.today().date()
             if today <= due_dt:
                 return ''

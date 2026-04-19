@@ -199,11 +199,17 @@ def save_installment_case(data):
         if f in int_fields:
             try: return int(str(data.get(f, 0) or 0))
             except: return 0
+        if f == 'date':      return _date(data, 'date')
         # map unified 'address' → address1, 'remarks' → remarks_cust
         if f == 'address1':
             return _v(data, 'address1') or _v(data, 'address')
         if f == 'remarks_cust':
             return _v(data, 'remarks_cust') or _v(data, 'remarks')
+        # ✅ FIX — keep finance_amt and amount_financed in sync
+        if f == 'finance_amt':
+            return _flt(data.get('finance_amt') or data.get('amount_financed') or 0)
+        if f == 'amount_financed':
+            return _flt(data.get('amount_financed') or data.get('finance_amt') or 0)
         return _v(data, f)
 
     case_id = data.get('id')
@@ -239,11 +245,27 @@ def get_installment_payments(case_id):
     c.close(); conn.close()
     return [_stringify(r) for r in rows]
 
+from datetime import datetime
+
 def to_mysql_date(d):
     if not d or str(d).strip() == "":
         return None
-    from datetime import datetime
-    return datetime.strptime(d, "%d/%m/%Y").strftime("%Y-%m-%d")
+
+    formats = [
+        "%d/%m/%Y",
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%d-%m-%Y",
+        "%m/%d/%Y",
+    ]
+
+    for fmt in formats:
+        try:
+            return datetime.strptime(str(d).strip(), fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+
+    return None
 
 def save_installment_payments(case_id, rows):
     conn = get_conn()
@@ -261,10 +283,16 @@ def save_installment_payments(case_id, rows):
               r.get('receipt_no', ''),
               _flt(r.get('amount', 0)),
               _flt(r.get('balance', 0))))
+
     total_recv = sum(_flt(r.get('amount', 0)) for r in rows if to_mysql_date(r.get('recv_date')))
+
+    # ✅ FIX — use whichever finance field is actually filled
     c.execute("""
-        UPDATE installment_cases SET balance = amount_financed - %s WHERE id = %s
+        UPDATE installment_cases
+        SET balance = COALESCE(NULLIF(amount_financed, 0), finance_amt, 0) - %s
+        WHERE id = %s
     """, (total_recv, case_id))
+
     conn.commit()
     c.close(); conn.close()
 
@@ -323,8 +351,11 @@ def save_credit_case(data):
     num_fields = ['amount','finance_amt','total_receipt','balance']
     all_fields = text_fields + num_fields
 
+    DATE_FIELDS = {'date', 'next_due_date'}
+
     def val(f):
-        if f in num_fields: return _flt(data.get(f, 0))
+        if f in num_fields:   return _flt(data.get(f, 0))
+        if f in DATE_FIELDS:  return _date(data, f)
         return _v(data, f)
 
     case_id = data.get('id')
@@ -340,12 +371,14 @@ def save_credit_case(data):
         case_id = c.lastrowid
     c.execute("DELETE FROM credit_payment_rows WHERE case_id=%s", (case_id,))
     for row in data.get('payment_rows', []):
+        raw_date = row[1] if len(row) > 1 else ''
+        row_date = None if not raw_date or str(raw_date).strip() == '' else str(raw_date)
         c.execute("""
             INSERT INTO credit_payment_rows (case_id, description, date, sale_amt, receipt)
             VALUES (%s,%s,%s,%s,%s)
         """, (case_id,
               row[0] if len(row) > 0 else '',
-              row[1] if len(row) > 1 else '',
+              row_date,
               _flt(row[2]) if len(row) > 2 else 0,
               _flt(row[3]) if len(row) > 3 else 0))
     conn.commit()
@@ -398,33 +431,52 @@ def get_due_payments():
             ic.balance,
             ic.instalment_amt,
 
-            COUNT(
-                CASE 
-                    WHEN ip.recv_date IS NULL
-                    AND ip.inst_date < CURDATE()
-                    THEN 1
-                END
-            ) AS missed_instalments,
-
-            SUM(
-                CASE 
-                    WHEN ip.recv_date IS NULL
-                    AND ip.inst_date < CURDATE()
-                    THEN 
-                        CASE 
-                            WHEN ip.amount = 0 THEN ic.instalment_amt
-                            ELSE ip.amount
+            -- Count instalments whose due date has passed and have NOT been received
+            -- Also counts cases where NO chart rows exist at all (no_rows_case):
+            --   if the case has no payment rows, we treat ALL expected instalments as missed.
+            CASE
+                WHEN COUNT(ip.id) = 0
+                    THEN GREATEST(ic.no_instalments, 1)
+                ELSE
+                    COUNT(
+                        CASE
+                            WHEN ip.recv_date IS NULL
+                             AND ip.inst_date IS NOT NULL
+                             AND ip.inst_date < CURDATE()
+                            THEN 1
                         END
-                    ELSE 0
-                END
-            ) AS total_overdue
+                    )
+            END AS missed_instalments,
+
+            CASE
+                WHEN COUNT(ip.id) = 0
+                    THEN ic.finance_amt
+                ELSE
+                    SUM(
+                        CASE
+                            WHEN ip.recv_date IS NULL
+                             AND ip.inst_date IS NOT NULL
+                             AND ip.inst_date < CURDATE()
+                            THEN
+                                CASE
+                                    WHEN COALESCE(ip.amount, 0) = 0 THEN ic.instalment_amt
+                                    ELSE ip.amount
+                                END
+                            ELSE 0
+                        END
+                    )
+            END AS total_overdue
 
         FROM installment_cases ic
         LEFT JOIN installment_payments ip ON ip.case_id = ic.id
 
-        WHERE ic.balance > 0
+        -- Include cases with any positive balance OR finance amount
+        WHERE COALESCE(ic.balance, 0) > 0
+           OR COALESCE(ic.finance_amt, 0) > 0
 
         GROUP BY ic.id
+
+        -- Show if at least 1 instalment is missed OR no chart rows saved yet (all missed)
         HAVING missed_instalments > 0
 
         ORDER BY missed_instalments DESC
@@ -501,6 +553,13 @@ def get_overview():
 def _v(d, key):
     val = d.get(key, '')
     return '' if val is None else str(val)
+
+def _date(d, key):
+    """Return None for blank/missing date values so MySQL DATE columns get NULL, not ''."""
+    v = d.get(key, None)
+    if not v or str(v).strip() == '':
+        return None
+    return str(v)
 
 def _flt(v):
     try:
