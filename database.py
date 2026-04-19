@@ -112,6 +112,8 @@ def init_db():
             total_receipt   DECIMAL(15,2) DEFAULT 0,
             balance         DECIMAL(15,2) DEFAULT 0,
             next_due_date   DATE,
+            fine            DECIMAL(15,2) DEFAULT 0,
+            fine_applied    TINYINT(1)    DEFAULT 0,
             g1_name         VARCHAR(200),
             g1_relation     VARCHAR(200),
             g1_address      VARCHAR(300),
@@ -141,6 +143,16 @@ def init_db():
             name    VARCHAR(100) UNIQUE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """)
+
+    # ✅ Add fine columns to existing databases that don't have them yet
+    for col, definition in [
+        ("fine",         "DECIMAL(15,2) DEFAULT 0"),
+        ("fine_applied", "TINYINT(1)    DEFAULT 0"),
+    ]:
+        try:
+            c.execute(f"ALTER TABLE credit_cases ADD COLUMN {col} {definition}")
+        except Exception:
+            pass   # column already exists — ignore
 
     c.close()
     conn.close()
@@ -348,14 +360,18 @@ def save_credit_case(data):
         'mobile_no','remarks','next_due_date',
         'g1_name','g1_relation','g1_address','g1_village','g1_mobile','g1_remarks',
     ]
-    num_fields = ['amount','finance_amt','total_receipt','balance']
-    all_fields = text_fields + num_fields
+    num_fields = ['amount','finance_amt','total_receipt','balance','fine']
+    int_fields = ['fine_applied']
+    all_fields = text_fields + num_fields + int_fields
 
     DATE_FIELDS = {'date', 'next_due_date'}
 
     def val(f):
         if f in num_fields:
             return _flt(data.get(f, 0))
+        if f in int_fields:
+            try: return int(str(data.get(f, 0) or 0))
+            except: return 0
         if f in DATE_FIELDS:
             return to_mysql_date(data.get(f))   # ✅ FIXED
         return _v(data, f)
@@ -397,6 +413,44 @@ def save_credit_case(data):
     conn.close()
 
     return case_id
+
+
+def apply_fine_if_due(case_id):
+    """
+    If today is past next_due_date AND fine > 0 AND fine_applied = 0,
+    add the fine to balance once and mark fine_applied = 1.
+    Returns True if fine was applied this call, False otherwise.
+    """
+    from datetime import date
+    conn = get_conn()
+    c = conn.cursor(dictionary=True)
+    c.execute(
+        "SELECT next_due_date, fine, fine_applied, balance FROM credit_cases WHERE id=%s",
+        (case_id,)
+    )
+    row = c.fetchone()
+    if not row:
+        c.close(); conn.close()
+        return False
+
+    fine         = float(row['fine'] or 0)
+    fine_applied = int(row['fine_applied'] or 0)
+    next_due     = row['next_due_date']   # already a date object from MySQL
+
+    # Only apply if: fine > 0, not yet applied, due date is in the past
+    if fine > 0 and fine_applied == 0 and next_due and next_due < date.today():
+        new_balance = float(row['balance'] or 0) + fine
+        c2 = conn.cursor()
+        c2.execute(
+            "UPDATE credit_cases SET balance=%s, fine_applied=1 WHERE id=%s",
+            (new_balance, case_id)
+        )
+        conn.commit()
+        c2.close(); c.close(); conn.close()
+        return True
+
+    c.close(); conn.close()
+    return False
 
 
 def delete_credit_case(case_id):

@@ -1632,6 +1632,17 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
     Pass data=None for a new case, or a dict to pre-fill for editing.
     """
     editing = data is not None
+
+    # ── Auto-apply fine once after due date passes ────────────────────────
+    if editing and data.get('id'):
+        was_applied = db.apply_fine_if_due(int(data['id']))
+        if was_applied:
+            # Reload fresh data so the form shows the updated balance & fine_applied flag
+            fresh = db.get_credit_case(int(data['id']))
+            if fresh:
+                data = fresh
+                d    = data   # will be re-set below, but refresh the reference early
+    # ─────────────────────────────────────────────────────────────────────
     win = tk.Toplevel(parent)
     win.title("Credit Case Details — Sandhu Enterprises")
     win.state("zoomed")
@@ -1866,6 +1877,13 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
     fine_entry_w.grid(row=4, column=1, sticky="ew", ipady=8, pady=6, padx=(0, 8))
     entries['fine'] = fine_var
 
+    # Lock fine field once applied so it can't be changed accidentally
+    if int(str(d.get('fine_applied', 0) or 0)) == 1:
+        fine_entry_w.config(state="readonly", readonlybackground="#fff0f0",
+                            fg=ACCENT_RED, font=(FONT_MONO, 14, "bold"))
+        tk.Label(ig, text="✓ Applied", font=(FONT_UI, 11, "bold"),
+                 fg=ACCENT_RED, bg=BG_CARD).grid(row=4, column=2, sticky="w", padx=4)
+
     # Photo placeholder — right side of item card
     photo_frame = tk.Frame(item_inner, bg=BG_CARD,
                            highlightbackground=BORDER, highlightthickness=1,
@@ -2089,7 +2107,16 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
         # AMOUNT is driven by the sum of the SALE AMOUNT column
         amount_var.set(f"{sale_tot:.2f}")
         receipt_var.set(f"{rec_tot:.2f}")
-        balance_var.set(f"{sale_tot - rec_tot:.2f}")
+        # Fine is added to balance only if due date has passed and fine > 0
+        try:
+            fine_val = float(str(fine_var.get()).replace(',', '') or 0)
+        except Exception:
+            fine_val = 0.0
+        due_raw = entries.get('next_due_date')
+        due_str = due_raw.get() if isinstance(due_raw, tk.Entry) else ""
+        due_dt  = _parse_date(due_str)
+        fine_pending = fine_val > 0 and due_dt is not None and due_dt.date() < datetime.today().date()
+        balance_var.set(f"{sale_tot - rec_tot + (fine_val if fine_pending else 0):.2f}")
 
     def add_row(e=None):
         n = len(sale_tree.get_children())
@@ -2118,6 +2145,8 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
 
     # initial totals
     recalc_totals()
+    # Recalc whenever fine amount or due date changes
+    fine_var.trace_add("write", lambda *_: recalc_totals())
 
     # ── Action bar ────────────────────────────────────────────────────────
     tk.Frame(win, bg=BORDER, height=1).pack(fill=tk.X, side=tk.BOTTOM)
@@ -2154,13 +2183,15 @@ def new_credit_case_form(parent, data=None, on_save_callback=None):
             'total_receipt':  receipt_var.get(),
             'balance':        balance_var.get(),
             'next_due_date':  to_mysql_date(get('next_due_date')),
+            'fine':           get('fine'),
+            # Preserve fine_applied flag from the loaded data so saving never resets it
+            'fine_applied':   int(str(d.get('fine_applied', 0) or 0)),
             'g1_name':        get('g1_name'),
             'g1_relation':    get('g1_relation'),
             'g1_address':     get('g1_address'),
             'g1_village':     get('g1_village'),
             'g1_mobile':      get('g1_mobile'),
             'g1_remarks':     get('g1_remarks'),
-            'fine':           get('fine'),
             'payment_rows':   rows,
         }
 
