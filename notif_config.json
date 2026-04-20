@@ -1,0 +1,10 @@
+{
+  "whatsapp_msg": "Namaskar {name} ji,\n\nAapka Sandhu Enterprises me file no *{file_no}* ka due payment ₹*{amount}* ki date *{date}* ko thi jo abhi tak pending hai.\n\nKripya jald se jald bhugtan karein.\n\nShukriya 🙏\n— {company}",
+  "sms_msg": "Namaskar {name} ji, Aapka Sandhu Enterprises file {file_no} ka due ₹{amount} date {date} ko tha. Kripya jald payment karein. -{company}",
+  "company": "Sandhu Enterprises",
+  "send_whatsapp": false,
+  "send_sms": true,
+  "fast2sms_key": "DhprN6X4a1LkVl2IzKw08nS9foGsxuqFYMtHejmRiBJ5EAOTvdx1tabZCBUwSMYsdNX8T6nHqeifVyWK",
+  "whatsapp_delay": 3,
+  "callmebot_key": ""
+}
