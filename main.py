@@ -88,7 +88,7 @@ def to_display_date(d):
 
 
 # ── Admin password ────────────────────────────────────────────────────────────
-ADMIN_PASSWORD = "9241"   # ← change this to your preferred password
+ADMIN_PASSWORD = "9246"   # ← change this to your preferred password
 
 def admin_confirm(parent, action="delete this record"):
     """Show a password dialog. Returns True only if the correct password is entered."""
@@ -1048,16 +1048,27 @@ def open_installment_chart_window(case_record, parent_win):
                 p.get('balance', balance_orig),
             ), tags=(_row_tag(i, recv, inst_date),),)
     else:
-        # Generate monthly instalment dates starting from the case date (or today)
+        # Generate monthly instalment dates starting ONE month after the case date
         import calendar
         raw_case_date = r.get('date', '')
         _sd = _parse_date(str(raw_case_date).strip())
-        start_date = _sd.date() if _sd else _dt_chart.date.today()
+        # Always use the case's own date — never fall back to today
+        if not _sd:
+            messagebox.showwarning(
+                "Missing Date",
+                "This case has no date set.\n"
+                "Instalment dates could not be generated.\n"
+                "Please edit the case and set a valid date first.",
+                parent=top)
+            start_date = _dt_chart.date.today()
+        else:
+            start_date = _sd.date()
+
         for i in range(1, no_inst + 1):
-            # Advance by i months from start_date
-            month = start_date.month - 1 + i
-            year  = start_date.year + month // 12
-            month = month % 12 + 1
+            # Correct month arithmetic: add i months to start_date
+            total_months = start_date.month - 1 + i   # 0-based months from Jan
+            year  = start_date.year + total_months // 12
+            month = total_months % 12 + 1              # back to 1-based
             day   = min(start_date.day, calendar.monthrange(year, month)[1])
             inst_date_obj = _dt_chart.date(year, month, day)
             inst_date_str = inst_date_obj.strftime("%d/%m/%Y")
@@ -2281,10 +2292,10 @@ def credit_cases_window(parent):
 
     # Credit-specific columns (includes Fine on overdue balance)
     CR_COLS   = ['file_no', 'date', 'customer_display', 'village', 'mobile_no',
-                 'finance_amt', 'balance', 'next_due_date', 'fine_overdue', 'id']
+                 'finance_amt', 'balance', 'next_due_date', 'id']
     CR_HEADS  = ['File No', 'Date', 'Customer (Father)', 'Village', 'Mobile No',
-                 'Finance Amt', 'Balance', '\u26a0 Next Due Date', '\u26a0 Fine if Overdue', 'ID']
-    CR_WIDTHS = [70, 95, 200, 120, 140, 105, 100, 120, 145, 50]
+                 'Finance Amt', 'Balance', '\u26a0 Next Due Date', 'ID']
+    CR_WIDTHS = [70, 95, 200, 120, 140, 105, 100, 120, 50]
 
     # Fine rate: 2% per month on outstanding balance
     FINE_RATE_PER_DAY = 0.02 / 30
@@ -2319,7 +2330,7 @@ def credit_cases_window(parent):
     tree = ttk.Treeview(tb, columns=CR_COLS, show="headings", style="T.Treeview")
     for col, head, width in zip(CR_COLS, CR_HEADS, CR_WIDTHS):
         tree.heading(col, text=head)
-        anchor = "center" if col in ('finance_amt', 'balance', 'fine_overdue') else "w"
+        anchor = "center" if col in ('finance_amt', 'balance') else "w"
         tree.column(col, width=width, minwidth=50, anchor=anchor)
     tree.tag_configure("even",    background=BG_CARD)
     tree.tag_configure("odd",     background=BG_ROW_ALT)
@@ -2343,12 +2354,7 @@ def credit_cases_window(parent):
     def populate(rows):
         for item in tree.get_children(): tree.delete(item)
         for i, vals in enumerate(rows):
-            # vals[-2] is fine_overdue column; highlight red if overdue
-            fine_val = vals[-2] if len(vals) > 2 else ""
-            if fine_val and str(fine_val).strip():
-                tag = "overdue"
-            else:
-                tag = "even" if i % 2 == 0 else "odd"
+            tag = "even" if i % 2 == 0 else "odd"
             tree.insert("", tk.END, values=vals, tags=(tag,))
         rec_badge.config(text=f"  {len(rows)} records  ")
 
@@ -3442,6 +3448,616 @@ def village_setup_window(parent):
 # ═════════════════════════════════════════════════════════════════════════════
 # MAIN WINDOW
 # ═════════════════════════════════════════════════════════════════════════════
+# ═════════════════════════════════════════════════════════════════════════════
+# NOTIFICATION SYSTEM  —  WhatsApp + SMS  (Due-date reminders)
+# ═════════════════════════════════════════════════════════════════════════════
+import json, os, threading, time as _time
+
+# ── Default message templates  (edit inside the Settings window) ──────────
+_NOTIF_CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                   "notif_config.json")
+
+_DEFAULT_CONFIG = {
+    # {name}, {amount}, {date}, {file_no}, {company} are replaced at send-time
+    "whatsapp_msg": (
+        "Namaskar {name} ji,\n\n"
+        "Aapka Sandhu Enterprises me file no *{file_no}* ka due payment "
+        "₹*{amount}* ki date *{date}* ko thi jo abhi tak pending hai.\n\n"
+        "Kripya jald se jald bhugtan karein.\n\n"
+        "Shukriya 🙏\n— {company}"
+    ),
+    "sms_msg": (
+        "Namaskar {name} ji, "
+        "Aapka Sandhu Enterprises file {file_no} ka due ₹{amount} "
+        "date {date} ko tha. Kripya jald payment karein. "
+        "-{company}"
+    ),
+    "company": "Sandhu Enterprises",
+    "send_whatsapp": True,
+    "send_sms": True,
+    # Fast2SMS API key (free tier — get from fast2sms.com)
+    "fast2sms_key": "",
+    # Delay between messages in seconds (WhatsApp Web needs a small gap)
+    "whatsapp_delay": 15,
+}
+
+
+def _load_notif_config():
+    try:
+        if os.path.exists(_NOTIF_CONFIG_FILE):
+            with open(_NOTIF_CONFIG_FILE, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+                # Fill missing keys from defaults
+                for k, v in _DEFAULT_CONFIG.items():
+                    cfg.setdefault(k, v)
+                return cfg
+    except Exception:
+        pass
+    return dict(_DEFAULT_CONFIG)
+
+
+def _save_notif_config(cfg):
+    try:
+        with open(_NOTIF_CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        pass
+
+
+def _clean_phone(raw):
+    """Strip spaces/dashes, add +91 if not present, return None if invalid."""
+    if not raw:
+        return None
+    digits = ''.join(c for c in str(raw) if c.isdigit() or c == '+')
+    digits = digits.lstrip('+')
+    if len(digits) == 10:
+        digits = '91' + digits
+    elif len(digits) == 12 and digits.startswith('91'):
+        pass
+    else:
+        return None   # can't parse
+    return '+' + digits
+
+
+def _format_msg(template, name, amount, date_str, file_no, company):
+    return (template
+            .replace("{name}",    str(name    or ""))
+            .replace("{amount}",  str(amount  or ""))
+            .replace("{date}",    str(date_str or ""))
+            .replace("{file_no}", str(file_no  or ""))
+            .replace("{company}", str(company  or "Sandhu Enterprises")))
+
+
+def _send_whatsapp_one(phone_e164, message, delay=15):
+    """
+    Send one WhatsApp message via pywhatkit (opens WhatsApp Web in browser).
+    phone_e164  e.g. '+919815565672'
+    """
+    try:
+        import pywhatkit as pwk
+        # sendwhatmsg_instantly sends immediately (no scheduling)
+        pwk.sendwhatmsg_instantly(
+            phone_no      = phone_e164,
+            message       = message,
+            wait_time     = delay,      # seconds to wait for WhatsApp Web to load
+            tab_close     = True,
+            close_time    = 3,
+        )
+        return True, "Sent"
+    except ImportError:
+        return False, "pywhatkit not installed.\nRun:  pip install pywhatkit"
+    except Exception as e:
+        return False, str(e)
+
+
+def _send_sms_fast2sms(phone_10digit, message, api_key):
+    """
+    Send SMS via Fast2SMS free API (India only).
+    phone_10digit  e.g. '9815565672'
+    api_key        from fast2sms.com → Developer → API
+    """
+    try:
+        import urllib.request, urllib.parse
+        payload = urllib.parse.urlencode({
+            "authorization": api_key,
+            "message":       message,
+            "language":      "english",
+            "route":         "q",
+            "numbers":       phone_10digit,
+        }).encode()
+        req = urllib.request.Request(
+            "https://www.fast2sms.com/dev/bulkV2",
+            data    = payload,
+            headers = {"cache-control": "no-cache"},
+            method  = "POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read().decode())
+            if result.get("return"):
+                return True, "SMS sent"
+            return False, result.get("message", "Unknown error")
+    except Exception as e:
+        return False, str(e)
+
+
+def _send_sms_phonelink(phone_e164, message):
+    """
+    Fallback SMS: open sms: URI — works if Windows Phone Link is set up.
+    """
+    import urllib.parse, webbrowser
+    encoded = urllib.parse.quote(message)
+    webbrowser.open(f"sms:{phone_e164}?body={encoded}")
+    return True, "SMS URI opened (Phone Link)"
+
+
+# ── Progress / result log window ─────────────────────────────────────────────
+def _run_notifications(parent, recipients, cfg, log_widget, done_label):
+    """
+    Worker function — runs in a background thread.
+    recipients: list of dicts with keys: name, phone, amount, date, file_no
+    """
+    wa_msg_tpl  = cfg.get("whatsapp_msg", _DEFAULT_CONFIG["whatsapp_msg"])
+    sms_msg_tpl = cfg.get("sms_msg",      _DEFAULT_CONFIG["sms_msg"])
+    company     = cfg.get("company",      "Sandhu Enterprises")
+    do_wa       = cfg.get("send_whatsapp", True)
+    do_sms      = cfg.get("send_sms",     True)
+    api_key     = cfg.get("fast2sms_key", "").strip()
+    wa_delay    = int(cfg.get("whatsapp_delay", 15))
+
+    def log(text, tag="info"):
+        try:
+            log_widget.config(state="normal")
+            log_widget.insert("end", text + "\n", tag)
+            log_widget.see("end")
+            log_widget.config(state="disabled")
+        except Exception:
+            pass
+
+    total = len(recipients)
+    for idx, r in enumerate(recipients, 1):
+        name     = r.get("name",    "Customer")
+        phone    = r.get("phone",   "")
+        amount   = r.get("amount",  "")
+        date_str = r.get("date",    "")
+        file_no  = r.get("file_no", "")
+
+        phone_e164 = _clean_phone(phone)
+
+        log(f"\n[{idx}/{total}]  {name}  —  {phone}  —  ₹{amount}")
+
+        if not phone_e164:
+            log(f"  ⚠  Invalid phone number: '{phone}' — skipped", "warn")
+            continue
+
+        wa_msg  = _format_msg(wa_msg_tpl,  name, amount, date_str, file_no, company)
+        sms_msg = _format_msg(sms_msg_tpl, name, amount, date_str, file_no, company)
+
+        # ── WhatsApp ────────────────────────────────────────────────────────
+        if do_wa:
+            log(f"  📲  Sending WhatsApp to {phone_e164}…", "info")
+            ok, msg = _send_whatsapp_one(phone_e164, wa_msg, delay=wa_delay)
+            if ok:
+                log(f"  ✅  WhatsApp OK — {msg}", "ok")
+            else:
+                log(f"  ❌  WhatsApp FAILED — {msg}", "err")
+
+        # ── SMS ──────────────────────────────────────────────────────────────
+        if do_sms:
+            phone_10 = phone_e164.lstrip('+')[2:]   # strip +91
+            if api_key:
+                log(f"  📩  Sending SMS via Fast2SMS…", "info")
+                ok, msg = _send_sms_fast2sms(phone_10, sms_msg, api_key)
+            else:
+                log(f"  📩  Opening SMS via Phone Link…", "info")
+                ok, msg = _send_sms_phonelink(phone_e164, sms_msg)
+            if ok:
+                log(f"  ✅  SMS OK — {msg}", "ok")
+            else:
+                log(f"  ❌  SMS FAILED — {msg}", "err")
+
+        # Small pause between contacts so WhatsApp Web doesn't rate-limit
+        if do_wa and idx < total:
+            log(f"  ⏳  Waiting {wa_delay}s before next…", "dim")
+            _time.sleep(wa_delay)
+
+    log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    log(f"✅  Done — {total} contact(s) processed.", "ok")
+    try:
+        done_label.config(text="✅  All done!", fg=ACCENT2)
+    except Exception:
+        pass
+
+
+# ── Main notification window ──────────────────────────────────────────────────
+def notification_window(parent, recipients=None):
+    """
+    Full notification centre.
+    recipients: list of dicts {name, phone, amount, date, file_no}
+                If None, auto-loads all overdue cases from DB.
+    """
+    import datetime as _dt
+
+    cfg = _load_notif_config()
+
+    # ── Auto-load if not passed ───────────────────────────────────────────
+    if recipients is None:
+        recipients = []
+        # Installment overdue
+        try:
+            for r in db.get_due_payments():
+                recipients.append({
+                    "name":    fmt_customer(r.get("customer",""), r.get("relation","")),
+                    "phone":   r.get("mobile_no",""),
+                    "amount":  r.get("total_overdue",""),
+                    "date":    to_display_date(r.get("date","")),
+                    "file_no": r.get("file_no",""),
+                    "type":    "Installment",
+                })
+        except Exception:
+            pass
+        # Credit overdue
+        try:
+            for r in db.get_due_report():
+                recipients.append({
+                    "name":    fmt_customer(r.get("customer",""), r.get("relation","")),
+                    "phone":   r.get("mobile_no",""),
+                    "amount":  r.get("balance",""),
+                    "date":    to_display_date(r.get("next_due_date","")),
+                    "file_no": r.get("file_no",""),
+                    "type":    "Credit",
+                })
+        except Exception:
+            pass
+
+    win = tk.Toplevel(parent)
+    win.title("Notification Centre — Sandhu Enterprises")
+    win.state("zoomed")
+    win.configure(bg=BG)
+    apply_dark_titlebar(win)
+    build_style()
+
+    # ── Sidebar accent ────────────────────────────────────────────────────
+    tk.Frame(win, bg="#10b981", width=4).pack(side=tk.LEFT, fill=tk.Y)
+    body = tk.Frame(win, bg=BG)
+    body.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+    # ── Top bar ───────────────────────────────────────────────────────────
+    topbar = tk.Frame(body, bg=BG_PANEL, pady=14, padx=20)
+    topbar.pack(fill=tk.X)
+    tk.Label(topbar, text="🔔  NOTIFICATION CENTRE",
+             font=(FONT_UI, 19, "bold"), fg=TEXT, bg=BG_PANEL).pack(side=tk.LEFT)
+    tk.Label(topbar, text="  WhatsApp & SMS due-date reminders",
+             font=(FONT_UI, 12), fg=TEXT_DIM, bg=BG_PANEL).pack(side=tk.LEFT)
+    tk.Button(topbar, text="✕  Close", command=win.destroy,
+              font=(FONT_UI, 12), fg=TEXT_DIM, bg=BG_PANEL,
+              activeforeground=ACCENT_RED, activebackground=BG_PANEL,
+              relief="flat", bd=0, cursor="hand2", padx=12).pack(side=tk.RIGHT)
+    tk.Frame(body, bg=BORDER, height=1).pack(fill=tk.X)
+
+    # ── Two-column layout ─────────────────────────────────────────────────
+    cols = tk.Frame(body, bg=BG)
+    cols.pack(fill=tk.BOTH, expand=True, padx=16, pady=12)
+    cols.grid_columnconfigure(0, weight=5)
+    cols.grid_columnconfigure(1, weight=4)
+    cols.grid_rowconfigure(0, weight=1)
+
+    # ════════════════════════════════════════════════════════════════════
+    # LEFT — Recipients list
+    # ════════════════════════════════════════════════════════════════════
+    left = tk.Frame(cols, bg=BG_CARD,
+                    highlightbackground=BORDER, highlightthickness=1)
+    left.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+    left.grid_rowconfigure(1, weight=1)
+    left.grid_columnconfigure(0, weight=1)
+
+    lhdr = tk.Frame(left, bg=BG_CARD, padx=14, pady=10)
+    lhdr.grid(row=0, column=0, sticky="ew")
+    tk.Label(lhdr, text="📋  Recipients — Overdue Cases",
+             font=(FONT_UI, 13, "bold"), fg=TEXT, bg=BG_CARD).pack(side=tk.LEFT)
+    count_lbl = tk.Label(lhdr, text=f"  {len(recipients)}  ",
+                         font=(FONT_UI, 11, "bold"), fg=ACCENT2,
+                         bg="#1b2e4a", padx=6, pady=2)
+    count_lbl.pack(side=tk.LEFT, padx=6)
+
+    # Select All / None
+    sel_all_var = tk.BooleanVar(value=True)
+    chk_frame = tk.Frame(lhdr, bg=BG_CARD)
+    chk_frame.pack(side=tk.RIGHT)
+
+    rec_cols   = ("sel", "name", "phone", "amount", "date", "type", "file_no")
+    rec_heads  = ("✓", "Customer", "Mobile", "Due Amt", "Due Date", "Type", "File")
+    rec_widths = (30, 200, 120, 100, 95, 90, 75)
+
+    rec_wrap = tk.Frame(left, bg=BORDER, bd=1)
+    rec_wrap.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0,8))
+    rec_wrap.grid_rowconfigure(0, weight=1)
+    rec_wrap.grid_columnconfigure(0, weight=1)
+
+    rec_tree = ttk.Treeview(rec_wrap, columns=rec_cols, show="headings",
+                             style="T.Treeview")
+    for col, head, w in zip(rec_cols, rec_heads, rec_widths):
+        rec_tree.heading(col, text=head)
+        rec_tree.column(col, width=w, minwidth=30,
+                        anchor="center" if col in ("sel","amount","type") else "w")
+    rec_tree.tag_configure("even",    background=BG_CARD)
+    rec_tree.tag_configure("odd",     background=BG_ROW_ALT)
+    rec_tree.tag_configure("nophone", background="#fff0f0", foreground="#9ca3af")
+
+    vsb_r = tk.Scrollbar(rec_wrap, orient="vertical", command=rec_tree.yview)
+    rec_tree.configure(yscrollcommand=vsb_r.set)
+    vsb_r.grid(row=0, column=1, sticky="ns")
+    rec_tree.grid(row=0, column=0, sticky="nsew")
+
+    # Track selection per row
+    _selected = {}
+
+    def _populate_recipients():
+        for item in rec_tree.get_children():
+            rec_tree.delete(item)
+        _selected.clear()
+        for i, r in enumerate(recipients):
+            sel_mark = "☑" if _selected.get(i, True) else "☐"
+            phone_ok = bool(_clean_phone(r.get("phone","")))
+            tag = ("nophone",) if not phone_ok else (("even" if i%2==0 else "odd"),)
+            iid = rec_tree.insert("", "end", iid=str(i), tags=tag, values=(
+                sel_mark,
+                r.get("name",""),
+                r.get("phone",""),
+                f"₹ {float(r.get('amount') or 0):,.2f}",
+                r.get("date",""),
+                r.get("type",""),
+                r.get("file_no",""),
+            ))
+            _selected[i] = phone_ok   # deselect invalid phones by default
+
+        _refresh_sel_marks()
+        count_lbl.config(text=f"  {len(recipients)}  ")
+
+    def _refresh_sel_marks():
+        for i in range(len(recipients)):
+            try:
+                mark = "☑" if _selected.get(i, True) else "☐"
+                vals = list(rec_tree.item(str(i), "values"))
+                if vals:
+                    vals[0] = mark
+                    rec_tree.item(str(i), values=vals)
+            except Exception:
+                pass
+
+    def _toggle_row(e):
+        item = rec_tree.identify_row(e.y)
+        if not item:
+            return
+        try:
+            idx = int(item)
+            _selected[idx] = not _selected.get(idx, True)
+            _refresh_sel_marks()
+        except Exception:
+            pass
+
+    rec_tree.bind("<Button-1>", _toggle_row)
+
+    def _select_all():
+        for i in range(len(recipients)):
+            phone_ok = bool(_clean_phone(recipients[i].get("phone","")))
+            _selected[i] = phone_ok
+        _refresh_sel_marks()
+
+    def _select_none():
+        for i in range(len(recipients)):
+            _selected[i] = False
+        _refresh_sel_marks()
+
+    btn_row_l = tk.Frame(left, bg=BG_CARD, padx=8, pady=6)
+    btn_row_l.grid(row=2, column=0, sticky="ew")
+    tk.Button(btn_row_l, text="☑ Select All", font=(FONT_UI,11), fg=TEXT,
+              bg=BG_PANEL, relief="flat", bd=0, padx=10, pady=4, cursor="hand2",
+              command=_select_all).pack(side=tk.LEFT)
+    tk.Button(btn_row_l, text="☐ Select None", font=(FONT_UI,11), fg=TEXT,
+              bg=BG_PANEL, relief="flat", bd=0, padx=10, pady=4, cursor="hand2",
+              command=_select_none).pack(side=tk.LEFT, padx=4)
+    tk.Label(btn_row_l, text="Click any row to toggle selection",
+             font=(FONT_UI,10), fg=TEXT_DIM, bg=BG_CARD).pack(side=tk.RIGHT, padx=8)
+
+    _populate_recipients()
+
+    # ════════════════════════════════════════════════════════════════════
+    # RIGHT — Settings + Send
+    # ════════════════════════════════════════════════════════════════════
+    right_col = tk.Frame(cols, bg=BG)
+    right_col.grid(row=0, column=1, sticky="nsew")
+    right_col.grid_rowconfigure(3, weight=1)
+    right_col.grid_columnconfigure(0, weight=1)
+
+    # ── Channel toggles ───────────────────────────────────────────────
+    ch_card = tk.Frame(right_col, bg=BG_CARD,
+                       highlightbackground=BORDER, highlightthickness=1,
+                       padx=14, pady=12)
+    ch_card.grid(row=0, column=0, sticky="ew", pady=(0,8))
+    tk.Label(ch_card, text="📡  Channels", font=(FONT_UI,13,"bold"),
+             fg=TEXT, bg=BG_CARD).pack(anchor="w")
+    tk.Frame(ch_card, bg=BORDER, height=1).pack(fill=tk.X, pady=(6,8))
+
+    wa_var  = tk.BooleanVar(value=cfg.get("send_whatsapp", True))
+    sms_var = tk.BooleanVar(value=cfg.get("send_sms", True))
+
+    ch_row = tk.Frame(ch_card, bg=BG_CARD)
+    ch_row.pack(fill=tk.X)
+    tk.Checkbutton(ch_row, text="📲  WhatsApp (pywhatkit)",
+                   variable=wa_var, font=(FONT_UI,12),
+                   fg=TEXT, bg=BG_CARD, selectcolor=BG_INPUT,
+                   activebackground=BG_CARD).pack(side=tk.LEFT)
+    tk.Checkbutton(ch_row, text="📩  SMS",
+                   variable=sms_var, font=(FONT_UI,12),
+                   fg=TEXT, bg=BG_CARD, selectcolor=BG_INPUT,
+                   activebackground=BG_CARD).pack(side=tk.LEFT, padx=16)
+
+    # Fast2SMS key
+    api_frame = tk.Frame(ch_card, bg=BG_CARD)
+    api_frame.pack(fill=tk.X, pady=(8,0))
+    tk.Label(api_frame, text="Fast2SMS API Key (optional, for direct SMS):",
+             font=(FONT_UI,11), fg=TEXT_DIM, bg=BG_CARD).pack(anchor="w")
+    api_var = tk.StringVar(value=cfg.get("fast2sms_key",""))
+    api_entry = make_entry(api_frame, width=38)
+    api_entry.insert(0, cfg.get("fast2sms_key",""))
+    api_entry.pack(fill=tk.X, ipady=5, pady=(4,0))
+    tk.Label(api_frame,
+             text="Leave blank to use Windows Phone Link for SMS",
+             font=(FONT_UI,10), fg=TEXT_DIM, bg=BG_CARD).pack(anchor="w", pady=(2,0))
+
+    # ── Message templates ─────────────────────────────────────────────
+    msg_card = tk.Frame(right_col, bg=BG_CARD,
+                        highlightbackground=BORDER, highlightthickness=1,
+                        padx=14, pady=12)
+    msg_card.grid(row=1, column=0, sticky="ew", pady=(0,8))
+    tk.Label(msg_card, text="✏️  Message Templates",
+             font=(FONT_UI,13,"bold"), fg=TEXT, bg=BG_CARD).pack(anchor="w")
+    tk.Label(msg_card,
+             text="Variables: {name}  {file_no}  {amount}  {date}  {company}",
+             font=(FONT_UI,10), fg=TEXT_DIM, bg=BG_CARD).pack(anchor="w", pady=(2,6))
+    tk.Frame(msg_card, bg=BORDER, height=1).pack(fill=tk.X, pady=(0,8))
+
+    tk.Label(msg_card, text="WhatsApp Message:",
+             font=(FONT_UI,11,"bold"), fg=TEXT, bg=BG_CARD).pack(anchor="w")
+    wa_txt = tk.Text(msg_card, font=(FONT_UI,11), fg=TEXT, bg=BG_INPUT,
+                     relief="flat", highlightthickness=1,
+                     highlightbackground=BORDER, highlightcolor=ACCENT,
+                     height=6, padx=8, pady=6, wrap="word")
+    wa_txt.insert("1.0", cfg.get("whatsapp_msg", _DEFAULT_CONFIG["whatsapp_msg"]))
+    wa_txt.pack(fill=tk.X, pady=(4,10))
+
+    tk.Label(msg_card, text="SMS Message (keep short):",
+             font=(FONT_UI,11,"bold"), fg=TEXT, bg=BG_CARD).pack(anchor="w")
+    sms_txt = tk.Text(msg_card, font=(FONT_UI,11), fg=TEXT, bg=BG_INPUT,
+                      relief="flat", highlightthickness=1,
+                      highlightbackground=BORDER, highlightcolor=ACCENT,
+                      height=4, padx=8, pady=6, wrap="word")
+    sms_txt.insert("1.0", cfg.get("sms_msg", _DEFAULT_CONFIG["sms_msg"]))
+    sms_txt.pack(fill=tk.X, pady=(4,0))
+
+    company_var = tk.StringVar(value=cfg.get("company","Sandhu Enterprises"))
+    delay_var   = tk.StringVar(value=str(cfg.get("whatsapp_delay",15)))
+    extra_frame = tk.Frame(msg_card, bg=BG_CARD)
+    extra_frame.pack(fill=tk.X, pady=(8,0))
+    tk.Label(extra_frame, text="Company Name:", font=(FONT_UI,11), fg=TEXT_DIM, bg=BG_CARD,
+             width=14, anchor="w").grid(row=0, column=0, sticky="w")
+    co_e = make_entry(extra_frame, width=20)
+    co_e.insert(0, company_var.get())
+    co_e.grid(row=0, column=1, sticky="ew", ipady=5, padx=(4,16))
+    tk.Label(extra_frame, text="WA Delay (s):", font=(FONT_UI,11), fg=TEXT_DIM, bg=BG_CARD,
+             width=12, anchor="w").grid(row=0, column=2, sticky="w")
+    dl_e = make_entry(extra_frame, width=6)
+    dl_e.insert(0, delay_var.get())
+    dl_e.grid(row=0, column=3, sticky="ew", ipady=5, padx=(4,0))
+    extra_frame.grid_columnconfigure(1, weight=1)
+
+    def _save_cfg():
+        cfg["send_whatsapp"]   = wa_var.get()
+        cfg["send_sms"]        = sms_var.get()
+        cfg["fast2sms_key"]    = api_entry.get().strip()
+        cfg["whatsapp_msg"]    = wa_txt.get("1.0","end-1c").strip()
+        cfg["sms_msg"]         = sms_txt.get("1.0","end-1c").strip()
+        cfg["company"]         = co_e.get().strip() or "Sandhu Enterprises"
+        try:
+            cfg["whatsapp_delay"] = int(dl_e.get().strip() or 15)
+        except Exception:
+            cfg["whatsapp_delay"] = 15
+        _save_notif_config(cfg)
+        return cfg
+
+    tk.Button(msg_card, text="💾  Save Settings",
+              font=(FONT_UI,11,"bold"), fg=BG, bg=ACCENT,
+              relief="flat", bd=0, padx=12, pady=5, cursor="hand2",
+              command=lambda: (_save_cfg(),
+                               messagebox.showinfo("Saved", "Settings saved!", parent=win))
+              ).pack(anchor="e", pady=(8,0))
+
+    # ── Log window ────────────────────────────────────────────────────
+    log_card = tk.Frame(right_col, bg=BG_CARD,
+                        highlightbackground=BORDER, highlightthickness=1,
+                        padx=14, pady=12)
+    log_card.grid(row=3, column=0, sticky="nsew")
+    log_card.grid_rowconfigure(1, weight=1)
+    log_card.grid_columnconfigure(0, weight=1)
+    tk.Label(log_card, text="📜  Send Log", font=(FONT_UI,13,"bold"),
+             fg=TEXT, bg=BG_CARD).grid(row=0, column=0, sticky="w")
+
+    log_txt = tk.Text(log_card, font=(FONT_MONO,10), fg=TEXT, bg="#0f172a",
+                      relief="flat", highlightthickness=0,
+                      padx=8, pady=6, state="disabled", wrap="word")
+    log_txt.tag_config("ok",   foreground="#34d399")
+    log_txt.tag_config("err",  foreground="#f87171")
+    log_txt.tag_config("warn", foreground="#fbbf24")
+    log_txt.tag_config("dim",  foreground="#6b7280")
+    log_txt.tag_config("info", foreground="#e2e8f0")
+    log_sb = tk.Scrollbar(log_card, orient="vertical", command=log_txt.yview)
+    log_txt.configure(yscrollcommand=log_sb.set)
+    log_sb.grid(row=1, column=1, sticky="ns")
+    log_txt.grid(row=1, column=0, sticky="nsew", pady=(6,0))
+
+    done_lbl = tk.Label(log_card, text="", font=(FONT_UI,12,"bold"),
+                        fg=ACCENT2, bg=BG_CARD)
+    done_lbl.grid(row=2, column=0, sticky="w", pady=(4,0))
+
+    # ── Send button ───────────────────────────────────────────────────
+    send_frame = tk.Frame(right_col, bg=BG, pady=6)
+    send_frame.grid(row=2, column=0, sticky="ew")
+
+    def _do_send():
+        live_cfg = _save_cfg()
+        selected_recipients = [recipients[i]
+                                for i in range(len(recipients))
+                                if _selected.get(i, True)]
+        if not selected_recipients:
+            messagebox.showwarning("No Selection",
+                                   "No recipients selected.", parent=win)
+            return
+        if not live_cfg.get("send_whatsapp") and not live_cfg.get("send_sms"):
+            messagebox.showwarning("No Channel",
+                                   "Enable at least WhatsApp or SMS.", parent=win)
+            return
+
+        confirm_msg = (
+            f"Send messages to {len(selected_recipients)} recipient(s)?\n\n"
+            f"• WhatsApp: {'Yes' if live_cfg['send_whatsapp'] else 'No'}\n"
+            f"• SMS: {'Yes' if live_cfg['send_sms'] else 'No'}\n\n"
+            "Keep the app open while sending."
+        )
+        if not messagebox.askyesno("Confirm Send", confirm_msg, parent=win):
+            return
+
+        send_btn.config(state="disabled", text="⏳  Sending…")
+        done_lbl.config(text="Sending…", fg=ACCENT_YEL)
+
+        # Run in background thread so UI stays responsive
+        t = threading.Thread(
+            target=_run_notifications,
+            args=(win, selected_recipients, live_cfg, log_txt, done_lbl),
+            daemon=True,
+        )
+        t.start()
+
+        def _watch():
+            if t.is_alive():
+                win.after(500, _watch)
+            else:
+                try:
+                    send_btn.config(state="normal", text="🚀  Send Notifications")
+                except Exception:
+                    pass
+        win.after(500, _watch)
+
+    send_btn = tk.Button(send_frame, text="🚀  Send Notifications",
+                         command=_do_send,
+                         font=(FONT_UI,14,"bold"), fg=BG, bg="#10b981",
+                         activeforeground=BG, activebackground="#059669",
+                         relief="flat", bd=0, padx=24, pady=12,
+                         cursor="hand2")
+    send_btn.pack(fill=tk.X)
+
+    win.bind("<Escape>", lambda e: win.destroy())
+
+
 def main():
     root = tk.Tk()
     root.title("Sandhu Enterprises")
@@ -3458,7 +4074,7 @@ def main():
     hb.pack(fill=tk.X)
     hi = tk.Frame(hb, bg=BG_PANEL, padx=28, pady=18)
     hi.pack(side=tk.LEFT)
-    tk.Label(hi, text="SANDHU ENTERPRISES", font=(FONT_UI, 25, "bold"),
+    tk.Label(hi, text="SANDHU ENTERPRISES", font=(FONT_UI, 22, "bold"),
              fg=TEXT, bg=BG_PANEL).pack(anchor="w")
     tk.Label(hi, text="Financial Tracking System", font=(FONT_UI, 13),
              fg=TEXT_DIM, bg=BG_PANEL).pack(anchor="w")
@@ -3485,21 +4101,22 @@ def main():
     nav = tk.Frame(center, bg=BG)
     nav.place(relx=0.5, rely=0.5, anchor="center")
 
-    tk.Label(nav, text="Navigation", font=(FONT_UI, 14, "bold"),
+    tk.Label(nav, text="Navigation", font=(FONT_UI, 12, "bold"),
              fg=TEXT_DIM, bg=BG).pack(pady=(0, 20))
 
     for label, func, color in [
-        ("📁  Installment Cases",   installment_window,   ACCENT),
-        ("💰  Due Payments",        due_payments_window,  ACCENT2),
-        ("🔴  Credit Cases",        credit_cases_window,  ACCENT_RED),
-        ("📊  Due Report",          due_report_window,    ACCENT_YEL),
-        ("🏘️  Village Setup",       village_setup_window, ACCENT_PUR),
-        ("📈  Overview",            overview_window,      "#36bfd9"),
+        ("📁  Installment Cases",   installment_window,    ACCENT),
+        ("💰  Due Payments",        due_payments_window,   ACCENT2),
+        ("🔴  Credit Cases",        credit_cases_window,   ACCENT_RED),
+        ("📊  Due Report",          due_report_window,     ACCENT_YEL),
+        ("🏘️  Village Setup",       village_setup_window,  ACCENT_PUR),
+        ("📈  Overview",            overview_window,       "#36bfd9"),
+        ("🔔  Notifications",       notification_window,   "#10b981"),
     ]:
         rf2 = tk.Frame(nav, bg=BG)
         rf2.pack(fill=tk.X, pady=5)
         btn2 = tk.Button(rf2, text=label, command=lambda f=func: f(root),
-                         font=(FONT_UI, 15, "bold"), fg=TEXT, bg=BG_CARD,
+                         font=(FONT_UI, 13, "bold"), fg=TEXT, bg=BG_CARD,
                          activeforeground=TEXT, activebackground=BG_PANEL,
                          relief="flat", bd=0, cursor="hand2",
                          width=28, height=2, anchor="w", padx=20)
